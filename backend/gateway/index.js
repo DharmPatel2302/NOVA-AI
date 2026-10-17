@@ -86,7 +86,7 @@ app.use(
 app.get("/", (req, res) => {
   res.status(200).json({
     service: "Gateway",
-    status: "Running v2",
+    status: "Running v3",
   });
 });
 
