@@ -19,7 +19,7 @@ data "aws_subnets" "default" {
 # Firewall rules: what traffic is allowed in/out
 resource "aws_security_group" "nova_ai_sg" {
   name        = "${var.project_name}-sg"
-  description = "NOVA AI security group — allows SSH, HTTP, and all service ports"
+  description = "NOVA AI security group - allows SSH, HTTP, and all service ports"
   vpc_id      = data.aws_vpc.default.id
 
   # SSH — for manual access and CI/CD deploy
