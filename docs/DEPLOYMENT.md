@@ -15,6 +15,182 @@
 
 ---
 
+## HOW TO FIND FRONTEND AND BACKEND IN AWS + VERIFY THEY WORK
+
+---
+
+### Where is the Frontend?
+
+The frontend React app is deployed in **two places**:
+
+#### Place 1 — EC2 + Nginx (primary)
+
+```
+AWS Console → EC2 → Instances → nova-ai-server
+```
+- The React `dist/` files are stored at `/var/www/nova-ai/` on the EC2
+- Nginx serves them on **port 80**
+- Public link: `http://65.2.232.188`
+
+**To verify it works:**
+Open `http://65.2.232.188` in any browser.
+You should see the NOVA AI login/chat screen load.
+
+To see it in AWS Console:
+```
+EC2 → Instances → nova-ai-server
+→ Look at "Public IPv4 address" column → 65.2.232.188
+→ Open http://65.2.232.188 in browser
+```
+
+#### Place 2 — S3 Static Hosting (backup)
+
+```
+AWS Console → S3 → nova-ai-frontend-19d45e08
+```
+- The same React `dist/` files are uploaded to this S3 bucket
+- S3 serves them as a static website
+
+**To find the S3 public link:**
+```
+AWS Console
+→ S3
+→ Click bucket: nova-ai-frontend-19d45e08
+→ Properties tab
+→ Scroll to bottom: "Static website hosting"
+→ Copy the "Bucket website endpoint" URL
+```
+It looks like:
+`http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com`
+
+Open that URL in browser — same React app, served from S3.
+
+---
+
+### Where is the Backend?
+
+The backend (all 5 microservices + Redis) runs as **Docker containers on EC2**.
+
+```
+AWS Console → EC2 → Instances → nova-ai-server
+```
+- Same EC2 machine as the frontend
+- Docker runs 6 containers on this machine
+- Accessible on ports 8000–8004
+
+**To see the containers running:**
+```bash
+ssh -i nova-ai-key3.pem ubuntu@65.2.232.188
+docker ps
+```
+
+---
+
+### How to Check Backend is Working
+
+#### Method 1 — Health Check URL (easiest)
+
+Open this in your browser:
+```
+http://65.2.232.188:8000/health
+```
+
+You should see:
+```json
+{"status":"healthy till now !!","service":"gateway","timestamp":"2026-10-17T..."}
+```
+
+If this responds → gateway is running → backend is working.
+
+#### Method 2 — Check each service individually
+
+| Service | Health URL | Expected Response |
+|---------|-----------|-------------------|
+| Gateway | `http://65.2.232.188:8000/health` | `{"status":"healthy till now !!"}` |
+| Auth | `http://65.2.232.188:8001/health` | `{"status":"healthy","service":"auth"}` |
+| Chat | `http://65.2.232.188:8002/health` | `{"status":"healthy","service":"chat"}` |
+| Agent | `http://65.2.232.188:8003/health` | `{"status":"healthy","service":"agent"}` |
+| Billing | `http://65.2.232.188:8004/health` | `{"status":"healthy","service":"billing"}` |
+
+#### Method 3 — SSH and check Docker (most detailed)
+
+```bash
+ssh -i nova-ai-key3.pem ubuntu@65.2.232.188
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+Expected output:
+```
+NAMES                  STATUS                    PORTS
+nova-gateway           Up X hours (healthy)      0.0.0.0:8000->8000/tcp
+nova-auth-service      Up X hours (healthy)      0.0.0.0:8001->8001/tcp
+nova-chat-service      Up X hours (healthy)      0.0.0.0:8002->8002/tcp
+nova-billing-service   Up X hours (healthy)      0.0.0.0:8004->8004/tcp
+nova-agent-service     Up X hours (healthy)      0.0.0.0:8003->8003/tcp
+multiagent-redis       Up X hours (healthy)      0.0.0.0:6379->6379/tcp
+```
+
+All 6 showing **(healthy)** = everything working perfectly.
+
+#### Method 4 — Check logs of a specific service
+
+```bash
+# On EC2:
+cd /home/ubuntu/nova-ai/backend
+docker compose logs gateway --tail=20
+docker compose logs auth-service --tail=20
+docker compose logs agent-service --tail=20
+```
+
+---
+
+### How to Show This to Faculty
+
+**Step 1 — Show frontend public link:**
+```
+Open browser → http://65.2.232.188
+```
+> *"This is the frontend running live on AWS. The URL is the Elastic IP
+> assigned to our EC2 in Mumbai. It works from any device, anywhere."*
+
+**Step 2 — Show where the IP comes from:**
+```
+AWS Console → EC2 → Instances → nova-ai-server
+→ Point at Public IPv4: 65.2.232.188
+→ AWS Console → EC2 → Elastic IPs
+→ Show 65.2.232.188 is a fixed Elastic IP
+```
+> *"This IP is fixed — it doesn't change when the server restarts.
+> Created by Terraform in ec2.tf."*
+
+**Step 3 — Show backend health:**
+```
+Open browser → http://65.2.232.188:8000/health
+```
+> *"This is the API Gateway health endpoint. It confirms the backend
+> is running. The gateway is the single entry point for all API calls."*
+
+**Step 4 — Show all containers running:**
+```bash
+ssh -i nova-ai-key3.pem ubuntu@65.2.232.188
+docker ps
+```
+> *"Six containers — all healthy. Each microservice runs independently
+> in its own Docker container on this EC2 instance."*
+
+**Step 5 — Show S3 frontend:**
+```
+AWS Console → S3 → nova-ai-frontend-19d45e08 → Objects tab
+```
+Show the files: `index.html`, `assets/`, `favicon.svg`
+```
+Properties tab → Static website hosting → copy URL → open in browser
+```
+> *"The frontend is also hosted on S3 as a static website. S3 gives us
+> a second public URL served directly from AWS infrastructure."*
+
+---
+
 ## WHERE EVERYTHING IS DEPLOYED
 
 ```
