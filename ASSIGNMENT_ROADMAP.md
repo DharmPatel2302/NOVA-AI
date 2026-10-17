@@ -582,17 +582,56 @@ AWS ap-south-1 (Mumbai — closest to India)
 ├── Elastic IP             → Fixed public IP (doesn't change on restart)
 └── VPC + Subnet           → Isolated network environment
 
+Auto Scaling (ASG):
+├── Launch Template        → Blueprint for every new EC2 (same AMI + user_data.sh)
+├── Auto Scaling Group     → Min: 1, Max: 2 instances
+├── Scale-Out Policy       → Add 1 EC2 when CPU > 70% for 2 min
+├── Scale-In Policy        → Remove 1 EC2 when CPU < 30% for 10 min
+├── CloudWatch Alarm High  → Monitors avg CPU, triggers scale-out
+└── CloudWatch Alarm Low   → Monitors avg CPU, triggers scale-in
+
 External Services (Cloud):
 ├── MongoDB Atlas          → Cloud database (ap-south-1)
 ├── Qdrant Cloud           → Vector database (sa-east-1)
 └── Redis (Docker)         → Runs on EC2
 ```
 
+### Two Levels of Scaling in NOVA AI
+
+```
+Level 1 — Pod Scaling (Kubernetes HPA):
+  CPU inside EC2 > 70%
+        ↓
+  K8s adds more pods INSIDE the same EC2
+  agent: 1 pod → 5 pods (still on same machine)
+
+Level 2 — Instance Scaling (AWS ASG):
+  EC2 overall CPU > 70% for 2 consecutive minutes
+        ↓
+  AWS launches a NEW EC2 instance
+  EC2 #1 (original) + EC2 #2 (new) both running full stack
+```
+
+**Key difference:**
+- HPA = more containers on same server (fast, ~20 seconds, free)
+- ASG = more servers entirely (slow, ~3-5 minutes, costs money)
+- HPA triggers first. ASG is the last resort when even max pods can't handle load.
+
+### ASG File
+
+```
+terraform/
+└── asg.tf   → Launch Template + ASG + Scale policies + CloudWatch Alarms
+```
+
 ### Infrastructure Created by Terraform
 All resources created via `terraform apply` — no manual clicking:
-- EC2 instance ID: `i-05545f62376bd8319`
-- Security Group: `sg-040dcf71fa311359b`
-- S3 Bucket: `nova-ai-frontend-10a83092`
+- EC2 instance ID: `i-062dea98040e78dde`
+- Security Group: `sg-0bcdf8e177aa034ca`
+- S3 Bucket: `nova-ai-frontend-19d45e08`
+- Elastic IP: `65.2.232.188`
+- ASG: `nova-ai-asg` (min: 1, max: 2)
+- CloudWatch Alarms: `nova-ai-cpu-high` (>70%), `nova-ai-cpu-low` (<30%)
 - Region: ap-south-1 (Mumbai)
 
 ### How to Demonstrate

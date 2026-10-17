@@ -37,3 +37,18 @@ output "s3_bucket_name" {
   description = "S3 bucket name for frontend hosting"
   value       = aws_s3_bucket.frontend.bucket
 }
+
+output "asg_name" {
+  description = "Auto Scaling Group name"
+  value       = aws_autoscaling_group.nova_ai_asg.name
+}
+
+output "asg_min_max" {
+  description = "ASG min/max instance limits"
+  value       = "Min: ${aws_autoscaling_group.nova_ai_asg.min_size} / Max: ${aws_autoscaling_group.nova_ai_asg.max_size}"
+}
+
+output "cloudwatch_alarms" {
+  description = "CloudWatch alarm names for CPU scaling"
+  value       = "Scale-out: ${aws_cloudwatch_metric_alarm.cpu_high.alarm_name} | Scale-in: ${aws_cloudwatch_metric_alarm.cpu_low.alarm_name}"
+}
