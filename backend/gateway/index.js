@@ -86,13 +86,13 @@ app.use(
 app.get("/", (req, res) => {
   res.status(200).json({
     service: "Gateway",
-    status: "Running",
+    status: "Running v2",
   });
 });
 
 app.get("/health", (req, res) => {
   res.status(200).json({
-    status: "healthy",
+    status: "healthy till now !!",
     service: "gateway",
     timestamp: new Date().toISOString(),
   });
