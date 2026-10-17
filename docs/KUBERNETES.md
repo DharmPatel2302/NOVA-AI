@@ -5,29 +5,42 @@
 
 ## What Is Kubernetes?
 
-Docker Compose runs containers on **one machine**. If that machine dies, everything dies. If traffic spikes, you can't scale automatically.
+Docker Compose runs containers on **one machine**. If that machine dies, everything dies. If traffic spikes, you cannot scale automatically. If a container crashes, it stays down until you manually restart it.
 
-Kubernetes (K8s) is a **container orchestration system** that manages containers across one or many machines. It:
-- **Auto-restarts** crashed containers (self-healing)
-- **Load balances** traffic across multiple replicas
-- **Auto-scales** when demand increases
+Kubernetes (K8s) is a **container orchestration system** that manages containers automatically. It:
+- **Auto-restarts** crashed containers (self-healing) — no human needed
+- **Load balances** traffic across multiple replicas automatically
+- **Auto-scales** pods up and down based on CPU usage (HPA)
 - **Rolls out updates** with zero downtime
-- **Manages secrets** and configuration separately from code
+- **Manages secrets** — API keys never visible in plain text
+- **Enforces resource limits** — one service cannot starve others
 
-The analogy: Docker Compose is hiring one chef. Kubernetes is hiring a restaurant manager who automatically replaces sick chefs, hires more during rush hour, and fires extras when it's quiet.
+The analogy: Docker Compose is hiring one chef. If the chef gets sick, the kitchen stops. Kubernetes is hiring a restaurant manager who automatically replaces sick chefs, hires more during rush hour, and fires extras when it's quiet — all without you doing anything.
+
+---
+
+## Why We Use Kubernetes in NOVA AI
+
+NOVA AI has 5 microservices + Redis. Without Kubernetes:
+
+| Problem | Without K8s | With K8s |
+|---|---|---|
+| Agent service crashes at 3am | App is down until someone manually restarts | K8s detects crash in seconds, restarts automatically |
+| 100 users send AI requests simultaneously | 1 agent pod handles all — overloads, slows down | HPA spins up more agent pods, load balanced |
+| Deploy new version | Downtime during restart | Rolling update — zero downtime |
+| API key in .env file | Anyone with server access can read it | Stored in K8s Secret — access controlled |
+| One service uses 4GB RAM and crashes server | Everything dies | Resource limits cap it, only that pod restarts |
 
 ---
 
 ## NOVA AI Kubernetes Setup
 
-**Cluster:** Docker Desktop (local Kubernetes — `docker-desktop` context)
-**Namespace:** `nova-ai` (isolates all resources)
-**Local Registry:** `localhost:5000` (serves images to K8s containerd runtime)
+**Cluster:** Docker Desktop Kubernetes (local — `docker-desktop` context)
+**Namespace:** `nova-ai` — isolates all NOVA AI resources
+**Local Registry:** `localhost:5000` — serves built Docker images to K8s
 
-### Verified Running State
+### Verified Live State
 ```
-kubectl get pods -n nova-ai
-
 NAME                               READY   STATUS    RESTARTS   AGE
 agent-service-c88698894-gs68w      1/1     Running   0          89s
 auth-service-7b4b49f565-jk95g      1/1     Running   0          91s
@@ -35,44 +48,66 @@ billing-service-7c8846c5d7-9m47k   1/1     Running   0          90s
 chat-service-df7cc6c77-gfjws       1/1     Running   0          90s
 gateway-8dd87fb7d-f69t4            1/1     Running   0          89s
 redis-0                            1/1     Running   0          14m
+
+NAME          TARGETS       MINPODS   MAXPODS   REPLICAS
+agent-hpa     cpu: 0%/70%   1         5         1
+chat-hpa      cpu: 4%/70%   1         3         1
+gateway-hpa   cpu: 2%/70%   1         3         1
 ```
 
-All 6 pods: **1/1 Running** ✅
+All 6 pods running. 3 HPAs actively monitoring CPU. ✅
 
 ---
 
-## File Structure
+## Complete File Structure
 
 ```
 k8s/
-├── namespace.yaml    → Creates nova-ai namespace
-├── configmap.yaml    → Non-sensitive env vars (ports, URLs)
+├── namespace.yaml    → Creates nova-ai namespace (isolation)
+├── configmap.yaml    → Non-sensitive env vars (URLs, ports)
 ├── secrets.yaml      → Sensitive values (API keys, base64 encoded)
-├── redis.yaml        → Redis StatefulSet + ClusterIP Service
+├── redis.yaml        → Redis StatefulSet + ClusterIP Service + PVC
 ├── auth.yaml         → Auth Deployment + ClusterIP Service
 ├── chat.yaml         → Chat Deployment + ClusterIP Service
 ├── agent.yaml        → Agent Deployment + ClusterIP Service (higher resources)
 ├── billing.yaml      → Billing Deployment + ClusterIP Service
 ├── gateway.yaml      → Gateway Deployment + NodePort Service (port 30000)
-└── ingress.yaml      → Nginx Ingress routing all traffic to gateway
+├── ingress.yaml      → Nginx Ingress routing all traffic to gateway
+└── hpa.yaml          → HPA for agent (1-5 pods), gateway (1-3), chat (1-3)
 ```
 
 ---
 
-## Core Kubernetes Concepts Used
+## Every Kubernetes Object Explained
 
-### Namespace
+---
+
+### 1. Namespace
+
 ```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
   name: nova-ai
 ```
-A Namespace is a virtual cluster inside a cluster. All NOVA AI resources live in `nova-ai` — isolated from any other apps running on the same K8s cluster. Like a folder that separates your project from others.
+
+**What it is:** A virtual cluster inside a cluster. Like a folder that separates your project from everything else running on K8s.
+
+**Why we use it:** Without a namespace, NOVA AI resources mix with system resources (`kube-system`) and any other app. With `nova-ai` namespace:
+- `kubectl get pods -n nova-ai` shows ONLY your pods
+- Resources are isolated — another app can have a service named `gateway` without conflict
+- You can delete everything at once: `kubectl delete namespace nova-ai`
+
+**In every other YAML file:**
+```yaml
+metadata:
+  namespace: nova-ai   # Every resource goes into this namespace
+```
 
 ---
 
-### ConfigMap — Non-Sensitive Config
+### 2. ConfigMap — Non-Sensitive Configuration
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -85,14 +120,32 @@ data:
   CHAT_SERVICE: "http://chat-service:8002"
   AGENT_SERVICE: "http://agent-service:8003"
   BILLING_SERVICE: "http://billing-service:8004"
+  QDRANT_ENDPOINT: "https://422f6759-dd2a-451f..."
 ```
-Non-sensitive environment variables stored in K8s. Services reference these by name — no hardcoding URLs inside container images. Change the ConfigMap and redeploy — no image rebuild needed.
 
-**Key difference from Docker Compose:** In docker-compose, you hardcode `AUTH_SERVICE=http://auth-service:8001`. In K8s, this value comes from ConfigMap, making it easy to change per environment (dev/staging/prod).
+**What it is:** Key-value store for non-sensitive configuration. Safe to commit to Git.
+
+**Why we use it instead of hardcoding:** If you hardcode `http://auth-service:8001` inside your Docker image and later the URL changes, you need to rebuild the image. With ConfigMap, you update one YAML file and redeploy — no image rebuild.
+
+**How services use it:**
+```yaml
+# In any Deployment:
+env:
+  - name: REDIS_URL
+    valueFrom:
+      configMapKeyRef:
+        name: nova-ai-config
+        key: REDIS_URL
+# Pod gets REDIS_URL=redis://redis-service:6379 as environment variable
+```
+
+**K8s DNS — why service names work as URLs:**
+Inside K8s, every Service gets a DNS entry: `<service-name>.<namespace>.svc.cluster.local`. Within the same namespace, the shortform works: `http://auth-service:8001`. K8s automatically resolves `auth-service` to whatever IP the auth pod is currently running on. This is why pod IP changes don't matter.
 
 ---
 
-### Secret — Sensitive Values
+### 3. Secret — Sensitive Values
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -101,91 +154,143 @@ metadata:
   namespace: nova-ai
 type: Opaque
 data:
-  GROQ_API_KEY: Z3NrX1I0N21uTTZ6SmZm...   # base64 encoded
-  MONGODB_URI: bW9uZ29kYitzcnY6Ly8...       # base64 encoded
-  RAZORPAY_KEY_SECRET: UUtvWTVsaFd2cDk...   # base64 encoded
+  GROQ_API_KEY: Z3NrX1I0N21uTTZ6SmZm...       # base64 encoded
+  MONGODB_URI: bW9uZ29kYitzcnY6Ly8...           # base64 encoded
+  FIREBASE_PRIVATE_KEY: LS0tLS1CRUdJTi...       # base64 encoded
+  RAZORPAY_KEY_SECRET: UUtvWTVsaFd2cDk...       # base64 encoded
+  SESSION_SECRET: bm92YS1haS1zdXBlci...         # base64 encoded
+  # ... 15 total secrets
 ```
-API keys and passwords stored as K8s Secrets. They are base64 encoded (not encrypted by default, but access-controlled by K8s RBAC). Values are **never visible in plain text** in `kubectl describe`.
 
+**What it is:** Like ConfigMap but for sensitive data. Values are base64 encoded.
+
+**Important:** Base64 is NOT encryption — it's encoding. Anyone who can run `kubectl get secret nova-ai-secrets -o yaml` can decode the values. The protection comes from **Kubernetes RBAC** (Role-Based Access Control) — only authorized users and pods can read secrets.
+
+**Why base64?** K8s stores secrets as binary-safe data. Base64 allows any value (including multi-line Firebase private keys) to be stored as a single string.
+
+**How to encode a value:**
 ```bash
-kubectl get secrets -n nova-ai
-# Shows secret names but NOT values
-
-kubectl describe secret nova-ai-secrets -n nova-ai
-# Shows keys but values are hidden: GROQ_API_KEY: <set to the key ... of a Secret>
+echo -n "your-api-key" | base64
+# Output: eW91ci1hcGkta2V5
 ```
+
+**How services use it:**
+```yaml
+env:
+  - name: GROQ_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: nova-ai-secrets
+        key: GROQ_API_KEY
+# Pod gets GROQ_API_KEY injected as env var — never in plain text in YAML
+```
+
+**What kubectl shows:**
+```bash
+kubectl describe secret nova-ai-secrets -n nova-ai
+# Data
+# ====
+# GROQ_API_KEY:          44 bytes    ← key name visible, value hidden
+# MONGODB_URI:           147 bytes   ← value hidden
+# FIREBASE_PRIVATE_KEY:  1765 bytes  ← value hidden
+```
+
+Values are **never** shown in `kubectl describe` output.
 
 ---
 
-### Deployment — Running and Managing Pods
+### 4. Deployment — Running and Managing Pods
 
-A Deployment tells K8s: "Keep exactly N copies of this container running. If one dies, restart it."
+A Deployment tells Kubernetes: *"Keep exactly N copies of this container running. If one crashes, restart it. If I update the image, do it without downtime."*
 
-**Example — Auth Service:**
+**Full example — Agent Service (most complex):**
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: auth-service
+  name: agent-service
   namespace: nova-ai
 spec:
-  replicas: 1                     # Keep 1 pod running at all times
+  replicas: 1                          # Keep 1 pod running at all times
   selector:
     matchLabels:
-      app: auth-service
+      app: agent-service               # Manages pods with this label
   template:
+    metadata:
+      labels:
+        app: agent-service
     spec:
       containers:
-        - name: auth-service
-          image: localhost:5000/nova-auth-service:latest
+        - name: agent-service
+          image: localhost:5000/nova-agent-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8003
           env:
-            - name: MONGODB_URI
-              valueFrom:
-                secretKeyRef:     # Pull from Secret (not hardcoded)
-                  name: nova-ai-secrets
-                  key: MONGODB_URI
+            # Non-sensitive from ConfigMap
             - name: REDIS_URL
               valueFrom:
-                configMapKeyRef:  # Pull from ConfigMap
+                configMapKeyRef:
                   name: nova-ai-config
                   key: REDIS_URL
+            # Sensitive from Secret
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: GROQ_API_KEY
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"         # 100 millicores = 0.1 CPU
+              memory: "256Mi"   # Guaranteed minimum
+              cpu: "250m"       # 250 millicores = 0.25 CPU
             limits:
-              memory: "256Mi"
-              cpu: "200m"
-          livenessProbe:          # K8s restarts pod if this fails
+              memory: "512Mi"   # Hard maximum — never exceed this
+              cpu: "500m"       # Hard maximum
+          livenessProbe:        # "Is the pod alive? Restart if not."
             httpGet:
               path: /health
-              port: 8001
-          readinessProbe:         # K8s sends traffic only when this passes
+              port: 8003
+            initialDelaySeconds: 30   # Wait 30s before first check
+            periodSeconds: 15         # Check every 15s
+          readinessProbe:       # "Is the pod ready for traffic?"
             httpGet:
               path: /health
-              port: 8001
+              port: 8003
+            initialDelaySeconds: 20
+            periodSeconds: 10
 ```
 
 **Resource Limits — Why Agent Gets More:**
+
+Agent service does LLM inference, processes PDFs/images, and runs vector searches — it needs more resources than a simple CRUD service.
+
 ```
-Service      Requests         Limits
-─────────────────────────────────────────
-Gateway      128Mi / 100m     256Mi / 200m
-Auth         128Mi / 100m     256Mi / 200m
-Chat         128Mi / 100m     256Mi / 200m
-Billing      128Mi / 100m     256Mi / 200m
-Agent        256Mi / 250m     512Mi / 500m   ← 2x — runs LLMs + file processing
-Redis         64Mi /  50m     128Mi / 100m   ← lightweight
+Service      Memory Request/Limit    CPU Request/Limit
+──────────────────────────────────────────────────────
+Gateway      128Mi / 256Mi           100m / 200m
+Auth         128Mi / 256Mi           100m / 200m
+Chat         128Mi / 256Mi           100m / 200m
+Billing      128Mi / 256Mi           100m / 200m
+Agent        256Mi / 512Mi           250m / 500m   ← 2x everything
+Redis         64Mi / 128Mi            50m / 100m
 ```
-Agent service handles LangGraph execution, LLM API calls, file uploads, and vector search — it needs more resources than a simple CRUD service.
+
+**Liveness vs Readiness Probes:**
+
+| Probe | Purpose | Failure Action |
+|---|---|---|
+| `livenessProbe` | Is the container still alive? | K8s kills + restarts the pod |
+| `readinessProbe` | Is the container ready to receive traffic? | K8s stops sending traffic to it |
+
+Example: Agent service starts up but takes 20 seconds to connect to all AI APIs. During those 20 seconds, `readinessProbe` fails — K8s keeps sending traffic to other pods instead. Once ready, traffic flows. Without readiness probes, K8s might send requests to a pod that isn't fully initialized yet.
 
 ---
 
-### Service — Stable Network Identity
+### 5. Service — Stable Network Identity
 
-Pods get random IPs that change every restart. A Service gives a stable DNS name and IP that never changes.
+Pods get random IPs that change every restart. A Service gives a **stable DNS name** that always resolves to healthy pods.
 
-**ClusterIP** (internal-only — used by auth, chat, agent, billing, redis):
+**ClusterIP Service (internal — used by auth, chat, agent, billing, redis):**
 ```yaml
 apiVersion: v1
 kind: Service
@@ -194,15 +299,16 @@ metadata:
   namespace: nova-ai
 spec:
   selector:
-    app: auth-service       # Routes to pods with this label
+    app: auth-service     # Routes to ALL pods with this label
   ports:
     - port: 8001
       targetPort: 8001
-  type: ClusterIP           # Only reachable inside the cluster
+  type: ClusterIP          # Not accessible from outside the cluster
 ```
-Now any pod can reach auth at `http://auth-service:8001` — regardless of which physical pod is running or what IP it has.
 
-**NodePort** (external access — used by gateway only):
+Now any pod can call `http://auth-service:8001` — K8s resolves this to the correct pod IP automatically. If the pod restarts with a new IP, the Service still works — DNS is updated automatically.
+
+**NodePort Service (external — used by gateway only):**
 ```yaml
 apiVersion: v1
 kind: Service
@@ -215,18 +321,23 @@ spec:
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 30000       # Exposed on host machine at localhost:30000
+      nodePort: 30000      # Exposed on host at localhost:30000
   type: NodePort
 ```
-Gateway is the only service accessible from outside. The frontend talks to `http://localhost:30000` (maps to port 8000 inside the cluster).
+
+Gateway is the only service accessible from outside the cluster. `localhost:30000` → gateway pod port 8000. This is how the frontend and browser reach the backend.
 
 ---
 
-### StatefulSet — Redis with Persistent Storage
+### 6. StatefulSet — Redis with Persistent Storage
 
-Redis uses a StatefulSet instead of a Deployment because:
-1. **Stable network identity** — always reachable at `redis-0` not a random pod name
-2. **Persistent storage** — data survives pod restarts via PersistentVolumeClaim
+Redis uses a **StatefulSet** instead of a Deployment. The difference:
+
+| Feature | Deployment | StatefulSet |
+|---|---|---|
+| Pod naming | Random (redis-abc123) | Stable (redis-0, redis-1) |
+| Storage | Shared or none | Each pod gets its own PVC |
+| Use case | Stateless apps | Databases, caches |
 
 ```yaml
 apiVersion: apps/v1
@@ -235,22 +346,32 @@ metadata:
   name: redis
   namespace: nova-ai
 spec:
+  serviceName: redis-service
   replicas: 1
-  volumeClaimTemplates:           # Creates a PVC automatically
+  template:
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data        # Redis persists data here
+  volumeClaimTemplates:               # Auto-creates a PVC per replica
     - metadata:
         name: redis-data
       spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 1Gi          # 1GB persistent disk for session data
+            storage: 1Gi             # 1GB persistent disk
 ```
 
-If Redis pod crashes and restarts, all session data is still there — users don't get logged out.
+**Why persistence matters:** Without `volumeClaimTemplates`, if the Redis pod crashes, all session data is lost — every user gets logged out. With the PVC, data survives pod restarts.
 
 ---
 
-### Ingress — Single Entry Point
+### 7. Ingress — External Traffic Routing
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -259,7 +380,8 @@ metadata:
   name: nova-ai-ingress
   namespace: nova-ai
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "50m"   # Allow file uploads up to 50MB
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"   # Allow 50MB file uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
 spec:
   ingressClassName: nginx
   rules:
@@ -273,23 +395,98 @@ spec:
                 port:
                   number: 8000
 ```
-Ingress sits in front of everything and routes traffic to the gateway. In production (on EC2 with K3s), this replaces Nginx — Ingress handles SSL termination, path routing, and load balancing.
+
+**What it is:** A smart HTTP router that sits in front of all services. In production (on EC2 with K3s), Ingress handles:
+- SSL/TLS termination (HTTPS)
+- Path-based routing (`/api → backend`, `/ → frontend`)
+- Rate limiting
+- Large file upload support (the 50MB annotation)
+
+For local demo, we use NodePort directly. On cloud, Ingress is the proper way.
+
+---
+
+### 8. HPA — Horizontal Pod Autoscaler
+
+**This is the most impressive feature for the viva.**
+
+HPA watches CPU (and/or memory) usage of a Deployment. When usage exceeds a threshold, it automatically adds more pods. When it drops, it removes them. Zero human involvement.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-hpa
+  namespace: nova-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-service        # Watch this deployment
+  minReplicas: 1               # Never go below 1 pod
+  maxReplicas: 5               # Never go above 5 pods
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70   # Scale up when avg CPU > 70%
+```
+
+**How the scaling math works:**
+
+K8s checks every 15 seconds:
+```
+desiredReplicas = ceil(currentReplicas × (currentCPU / targetCPU))
+
+Example:
+currentReplicas = 1
+currentCPU = 140%  (very busy)
+targetCPU = 70%
+
+desiredReplicas = ceil(1 × 140/70) = ceil(2.0) = 2 pods
+
+Next check: currentCPU = 105%, 2 pods running
+desiredReplicas = ceil(2 × 105/70) = ceil(3.0) = 3 pods
+```
+
+**Three HPAs in NOVA AI:**
+
+| HPA | Service | Min | Max | Reason |
+|---|---|---|---|---|
+| `agent-hpa` | Agent | 1 | 5 | LLM inference is CPU-heavy — most likely to spike |
+| `chat-hpa` | Chat | 1 | 3 | Stateless CRUD — safe to scale horizontally |
+| `gateway-hpa` | Gateway | 1 | 3 | Handles all traffic — can bottleneck under load |
+
+**Why not HPA on Auth and Billing?**
+Auth is called once per login — very low traffic. Billing processes payments which are infrequent. They don't need autoscaling.
+
+**Why not HPA on Redis?**
+Redis is a StatefulSet. Scaling Redis horizontally requires cluster configuration (Redis Cluster) which is complex. Instead, Redis gets resource limits and we'd upgrade the instance size if needed.
+
+**Requires Metrics Server:**
+HPA needs real-time CPU data. Metrics Server collects this from every node and pod. We installed it with:
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+With `--kubelet-insecure-tls` flag for Docker Desktop compatibility.
 
 ---
 
 ## How to Apply All Manifests
 
-Apply in this order (namespace and config before workloads):
+**Order matters** — namespace before resources, config before workloads:
 
 ```bash
-# 1. Create namespace first
+# 1. Namespace first
 kubectl apply -f k8s/namespace.yaml
 
-# 2. Config and secrets
+# 2. Config and secrets (workloads need these)
 kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/secrets.yaml
 
-# 3. Database first (other services depend on Redis)
+# 3. Database (other services connect to Redis on startup)
 kubectl apply -f k8s/redis.yaml
 
 # 4. Application services
@@ -299,172 +496,183 @@ kubectl apply -f k8s/billing.yaml
 kubectl apply -f k8s/agent.yaml
 kubectl apply -f k8s/gateway.yaml
 
-# 5. Ingress last
+# 5. Ingress and HPA last
 kubectl apply -f k8s/ingress.yaml
+kubectl apply -f k8s/hpa.yaml
 
-# Or apply entire folder at once:
+# Or apply entire folder at once (K8s handles order internally):
 kubectl apply -f k8s/
 ```
 
 ---
 
-## Key kubectl Commands
+## Complete kubectl Command Reference
 
 ```bash
-# Show all pods in nova-ai namespace
-kubectl get pods -n nova-ai
+# ── Pods ─────────────────────────────────────────────────────
+kubectl get pods -n nova-ai                          # List all pods
+kubectl get pods -n nova-ai -w                       # Watch pods live (Ctrl+C to stop)
+kubectl describe pod <pod-name> -n nova-ai           # Detailed pod info
+kubectl logs -n nova-ai deployment/agent-service     # View logs
+kubectl logs -n nova-ai deployment/agent-service -f  # Follow live logs
+kubectl exec -it -n nova-ai deployment/gateway -- sh # Shell inside pod
 
-# Show all resources (pods, services, deployments, statefulsets)
-kubectl get all -n nova-ai
+# ── Deployments ──────────────────────────────────────────────
+kubectl get deployments -n nova-ai
+kubectl rollout restart deployment/agent-service -n nova-ai  # Force redeploy
+kubectl scale deployment agent-service --replicas=3 -n nova-ai  # Manual scale
 
-# Show services with cluster IPs and ports
+# ── Services ─────────────────────────────────────────────────
 kubectl get services -n nova-ai
+kubectl describe service gateway-service -n nova-ai
 
-# Watch pods in real time (Ctrl+C to stop)
-kubectl get pods -n nova-ai -w
+# ── HPA ──────────────────────────────────────────────────────
+kubectl get hpa -n nova-ai                           # Shows live CPU% vs target
+kubectl describe hpa agent-hpa -n nova-ai            # Full HPA details + history
 
-# Show secrets (keys visible, values hidden)
+# ── Secrets / ConfigMap ──────────────────────────────────────
 kubectl get secrets -n nova-ai
-kubectl describe secret nova-ai-secrets -n nova-ai
-
-# Show ConfigMap values
+kubectl describe secret nova-ai-secrets -n nova-ai   # Keys shown, values hidden
 kubectl describe configmap nova-ai-config -n nova-ai
 
-# View logs from a pod
-kubectl logs -n nova-ai deployment/auth-service
-kubectl logs -n nova-ai deployment/agent-service -f   # follow live logs
+# ── Everything at once ───────────────────────────────────────
+kubectl get all -n nova-ai
 
-# Execute command inside a running pod
-kubectl exec -it -n nova-ai deployment/gateway -- sh
+# ── Metrics ──────────────────────────────────────────────────
+kubectl top nodes                                    # Node CPU/memory
+kubectl top pods -n nova-ai                          # Per-pod CPU/memory
 
-# Scale a deployment
-kubectl scale deployment agent-service --replicas=3 -n nova-ai
-
-# Delete and re-apply everything
-kubectl delete namespace nova-ai
-kubectl apply -f k8s/
+# ── Cleanup ──────────────────────────────────────────────────
+kubectl delete namespace nova-ai                     # Delete everything
+kubectl apply -f k8s/                                # Re-create everything
 ```
 
 ---
 
-## Self-Healing Demo (Most Impressive)
+## Demonstration Guide for Faculty
 
-This is the #1 demo to show faculty — Kubernetes automatically restarts a crashed pod:
+### Demo 1 — Show all pods running (30 seconds)
+```bash
+kubectl get pods -n nova-ai
+```
+Point out:
+- 6 pods, all `1/1 Running`
+- Each corresponds to a microservice
+- `redis-0` uses StatefulSet naming (stable), others use random suffixes
+
+---
+
+### Demo 2 — Show all K8s objects (1 minute)
+```bash
+kubectl get all -n nova-ai
+```
+Walk through each section:
+- **Pods** — the actual running containers
+- **Services** — note ClusterIP (internal) vs NodePort (gateway at 30000)
+- **Deployments** — `1/1` means desired=1, available=1
+- **StatefulSet** — Redis with stable storage
+
+---
+
+### Demo 3 — Self-Healing: THE most impressive demo (2 minutes)
 
 ```bash
-# Step 1: Show all pods running
+# Step 1: Show current state
 kubectl get pods -n nova-ai
 
-# Step 2: Delete the agent pod (simulate a crash)
+# Step 2: Kill the agent pod (simulate a crash)
 kubectl delete pod -l app=agent-service -n nova-ai
 
-# Step 3: Watch K8s immediately create a new one
+# Step 3: Immediately run this — watch K8s react
 kubectl get pods -n nova-ai -w
 ```
 
-You'll see the sequence in about 10 seconds:
+Faculty sees this sequence in about 10 seconds:
 ```
-agent-service-c88698894-gs68w   1/1   Running     → Terminating
-agent-service-c88698894-nxk9p   0/1   Pending     → ContainerCreating → Running
+agent-service-c88698894-gs68w   1/1   Running    ← original pod
+agent-service-c88698894-gs68w   1/1   Terminating ← you deleted it
+agent-service-c88698894-nxk9p   0/1   Pending     ← K8s detected it's gone
+agent-service-c88698894-nxk9p   0/1   ContainerCreating
+agent-service-c88698894-nxk9p   1/1   Running     ← back up in ~10 seconds
 ```
 
-**What to say:** *"I deleted the pod — that simulates the process crashing. Kubernetes detected it immediately and created a replacement. The whole thing took 10 seconds. Users experienced no downtime. This is self-healing."*
+**What to say:** *"I deleted the agent pod — that simulates a crash. Kubernetes detected it immediately and created a replacement automatically. The whole process took 10 seconds. Users never see downtime. This is called self-healing."*
 
 ---
 
-## Scaling Demo
+### Demo 4 — HPA: Live autoscaling (2 minutes)
 
 ```bash
-# Scale agent service to 3 replicas
+# Show current HPA state with live CPU readings
+kubectl get hpa -n nova-ai
+```
+
+Output:
+```
+NAME          REFERENCE                  TARGETS       MINPODS   MAXPODS   REPLICAS
+agent-hpa     Deployment/agent-service   cpu: 0%/70%   1         5         1
+chat-hpa      Deployment/chat-service    cpu: 4%/70%   1         3         1
+gateway-hpa   Deployment/gateway         cpu: 2%/70%   1         3         1
+```
+
+Point out:
+- `TARGETS` column — `cpu: 0%/70%` means current CPU is 0%, threshold is 70%
+- This is **live data** from Metrics Server — not a config value
+- If CPU goes above 70%, K8s automatically adds pods up to MAXPODS
+
+```bash
+# Show more details including scaling history
+kubectl describe hpa agent-hpa -n nova-ai
+```
+
+**What to say:** *"HPA is watching CPU usage in real time. Right now agent is at 0% because it's idle. The moment it hits 70% — say 50 users are sending AI requests simultaneously — K8s automatically adds a second pod, then a third, up to 5 pods. When traffic drops, it scales back down to 1. No human involvement at all. This is production-grade autoscaling."*
+
+---
+
+### Demo 5 — Manual Scale (1 minute)
+
+```bash
+# Manually scale to 3 replicas
 kubectl scale deployment agent-service --replicas=3 -n nova-ai
 
-# Show 3 pods running
+# Show 3 pods
 kubectl get pods -n nova-ai
-# agent-service-xxx   1/1   Running
-# agent-service-yyy   1/1   Running
-# agent-service-zzz   1/1   Running
 
-# K8s automatically load balances across all 3
-# Scale back down
+# HPA will override this back to 1 if CPU stays low
+kubectl get hpa -n nova-ai
+
+# Scale back to 1
 kubectl scale deployment agent-service --replicas=1 -n nova-ai
 ```
 
-**What to say:** *"When the AI agent gets heavy traffic, I scale from 1 to 3 replicas with one command. Kubernetes automatically load balances requests across all 3 pods. With Docker Compose, this is impossible — you'd need to manually configure a load balancer."*
+**What to say:** *"I can also scale manually with one command. 3 agent pods running, load balanced automatically. When I scale back down, the extra pods are terminated gracefully — in-flight requests are completed first."*
 
 ---
 
-## Secrets Demo
+### Demo 6 — Secrets are protected (1 minute)
 
-```bash
-kubectl get secrets -n nova-ai
-# NAME               TYPE     DATA   AGE
-# nova-ai-secrets    Opaque   15     10m
-
-kubectl describe secret nova-ai-secrets -n nova-ai
-# Data
-# ====
-# GROQ_API_KEY:          44 bytes
-# MONGODB_URI:           147 bytes
-# RAZORPAY_KEY_SECRET:   24 bytes
-# (values never shown in plain text)
-```
-
-**What to say:** *"API keys are stored as Kubernetes Secrets. When I describe the secret, Kubernetes shows the key names but never the values. A developer can see that GROQ_API_KEY exists and has 44 bytes, but cannot read the actual key. This is access-controlled by Kubernetes RBAC."*
-
----
-
-## K8s vs Docker Compose — Side by Side
-
-| Feature | Docker Compose | Kubernetes |
-|---|---|---|
-| Runs on | 1 machine | Multiple machines |
-| Self-healing | No (manual restart) | Yes (automatic) |
-| Scaling | Manual (`--scale`) | `kubectl scale` or auto |
-| Load balancing | No | Built-in |
-| Secret management | `.env` files | K8s Secrets (access-controlled) |
-| Health checks | Basic | Liveness + Readiness probes |
-| Rolling updates | No | Zero-downtime rollouts |
-| Resource limits | No | CPU + memory limits per pod |
-| Persistent storage | Docker volumes | PersistentVolumeClaims |
-
----
-
-## What to Demonstrate to Faculty
-
-### Demo 1 — Show all pods running
-```bash
-kubectl get pods -n nova-ai
-```
-Point out: all 6 pods show `1/1 Running`. Each is a container managed by K8s.
-
-### Demo 2 — Show all K8s objects
-```bash
-kubectl get all -n nova-ai
-```
-Walk through: Pods, Services (ClusterIP vs NodePort), Deployments, StatefulSet for Redis.
-
-### Demo 3 — Self-healing (kill a pod, watch it restart)
-```bash
-kubectl delete pod -l app=agent-service -n nova-ai
-kubectl get pods -n nova-ai -w
-```
-Show the pod going `Terminating → ContainerCreating → Running` in ~10 seconds.
-
-### Demo 4 — Scale up
-```bash
-kubectl scale deployment agent-service --replicas=3 -n nova-ai
-kubectl get pods -n nova-ai
-```
-Show 3 agent pods running. Scale back to 1 after.
-
-### Demo 5 — Show secrets are protected
 ```bash
 kubectl describe secret nova-ai-secrets -n nova-ai
 ```
-Show keys are listed but values are hidden. Compare to `.env` file where everything is visible.
 
-### Demo 6 — Show resource limits
-Open `k8s/agent.yaml` — point out:
+Output:
+```
+Data
+====
+FIREBASE_PRIVATE_KEY:    1765 bytes   ← value never shown
+GROQ_API_KEY:            44 bytes
+MONGODB_URI:             147 bytes
+RAZORPAY_KEY_SECRET:     24 bytes
+SESSION_SECRET:          38 bytes
+```
+
+**What to say:** *"15 API keys stored in Kubernetes Secrets. I can see the key names and sizes but never the values. Compare this to a .env file where everything is visible in plain text. In K8s, access to secrets is controlled by RBAC — only pods that explicitly reference a secret can use it."*
+
+---
+
+### Demo 7 — Resource limits (1 minute)
+
+Open `k8s/agent.yaml`:
 ```yaml
 resources:
   requests:
@@ -474,13 +682,57 @@ resources:
     memory: "512Mi"
     cpu: "500m"
 ```
-*"Agent service gets double the resources of other services because it runs LLM inference. K8s guarantees it always has at least 256MB of memory and will never use more than 512MB — preventing one service from starving others."*
 
-### Demo 7 — Show ConfigMap
 ```bash
-kubectl describe configmap nova-ai-config -n nova-ai
+# Show live resource usage per pod
+kubectl top pods -n nova-ai
 ```
-Show all the inter-service URLs stored in ConfigMap, not hardcoded in images.
 
-### What to Say at Viva
-*"We use Kubernetes to run all 6 NOVA AI services as pods inside a dedicated namespace called nova-ai. Each service has a Deployment that ensures the correct number of replicas are always running — if a pod crashes, K8s creates a replacement automatically. Services communicate using stable DNS names provided by ClusterIP Services. The gateway is exposed externally via NodePort. Sensitive values like API keys are stored in Kubernetes Secrets and injected as environment variables — they're never visible in plain text. Redis uses a StatefulSet with a PersistentVolumeClaim so session data survives pod restarts. The agent service gets higher CPU and memory limits than other services because it handles LLM inference and file processing. The key advantage over Docker Compose is self-healing — Kubernetes monitors every pod and automatically restarts anything that crashes, giving us production-grade reliability."*
+**What to say:** *"Every service has CPU and memory limits. Agent gets 512MB max because it runs LLM inference and file processing. If agent tries to use more than 512MB, K8s kills and restarts just that pod — the auth, chat, and billing services keep running normally. Resource limits prevent one misbehaving service from crashing the entire system."*
+
+---
+
+### Demo 8 — Show K8s vs Docker Compose (30 seconds)
+
+Open two files side by side:
+- `backend/docker-compose.yml`
+- `k8s/agent.yaml`
+
+Point out what K8s adds on top of Docker Compose:
+- `replicas` — desired state management
+- `livenessProbe` + `readinessProbe` — health management
+- `resources` limits — prevents resource starvation
+- `secretKeyRef` — secure secret injection
+- HPA — automatic scaling
+
+---
+
+## K8s vs Docker Compose — Full Comparison
+
+| Feature | Docker Compose | Kubernetes |
+|---|---|---|
+| Runs on | 1 machine | Multiple machines |
+| Self-healing | No — manual restart | Yes — automatic |
+| Scaling | Manual `--scale` | `kubectl scale` or HPA (auto) |
+| Load balancing | No | Built-in via Services |
+| Secret management | `.env` files (plain text) | K8s Secrets (access controlled) |
+| Health checks | Basic | Liveness + Readiness probes |
+| Rolling updates | Downtime | Zero-downtime rollouts |
+| Resource limits | No | CPU + memory limits per pod |
+| Persistent storage | Docker volumes | PersistentVolumeClaims |
+| Auto-scaling | No | HPA — CPU/memory triggered |
+| Multi-machine | No | Yes — pods run on any node |
+
+---
+
+## What to Say at Viva — Complete Script
+
+*"We use Kubernetes to run all 6 NOVA AI services as pods inside a dedicated namespace called nova-ai. Each service has a Deployment that maintains the desired replica count — if any pod crashes, Kubernetes detects it within seconds and creates a replacement automatically. This is called self-healing and it means zero downtime even when containers crash.*
+
+*Services communicate using Kubernetes DNS — each service gets a stable name like auth-service:8001 that always resolves to healthy pods regardless of which IP they're running on.*
+
+*Sensitive values like API keys, the MongoDB URI, and Firebase private keys are stored in Kubernetes Secrets. They're base64 encoded and never visible in plain text — even kubectl describe doesn't show the values.*
+
+*We use a StatefulSet for Redis with a PersistentVolumeClaim because Redis holds session data. If the Redis pod crashes, the PVC preserves the data so users don't get logged out.*
+
+*The most powerful feature is the Horizontal Pod Autoscaler. We have HPAs on the agent, gateway, and chat services. When CPU usage crosses 70%, K8s automatically adds more pods up to a maximum of 5 for agent and 3 for the others. When traffic drops, it scales back down to 1. This happens completely automatically with no human intervention — that's what makes Kubernetes production-grade."*
