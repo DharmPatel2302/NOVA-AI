@@ -216,11 +216,18 @@ jobs:
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
-          printf '%s' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/nova-ai-key.pem
-          # Ensure proper Unix line endings
+          # Write key — preserve newlines
+          cat << 'KEYEOF' > ~/.ssh/nova-ai-key.pem
+          ${{ secrets.EC2_SSH_KEY }}
+          KEYEOF
+          # Strip any leading spaces from heredoc
+          sed -i 's/^[[:space:]]*//' ~/.ssh/nova-ai-key.pem
           sed -i 's/\r//' ~/.ssh/nova-ai-key.pem
           chmod 600 ~/.ssh/nova-ai-key.pem
-          # Verify key is valid
+          # Debug: show first and last lines
+          head -1 ~/.ssh/nova-ai-key.pem
+          tail -1 ~/.ssh/nova-ai-key.pem
+          wc -l ~/.ssh/nova-ai-key.pem
           ssh-keygen -y -f ~/.ssh/nova-ai-key.pem > /dev/null && echo "Key is valid" || echo "Key validation failed"
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
