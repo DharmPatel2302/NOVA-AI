@@ -1,0 +1,13 @@
+# Normalize line endings to LF on all platforms
+* text=auto eol=lf
+
+# Binary files — don't touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+*.pdf binary
+*.pptx binary
+*.pem binary

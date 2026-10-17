@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+.env
+**/.env
+.env.*
+**/.env.*
+.git
+.gitignore
+*.log
+npm-debug.log*
+services/agent/temp/uploads/*
+!services/agent/temp/uploads/.gitkeep
+.vscode
+.DS_Store
+Dockerfile
+docker-compose.yml

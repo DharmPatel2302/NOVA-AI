@@ -1,0 +1,366 @@
+@import "tailwindcss";
+
+/* ─── NOVA Design System ─────────────────────────────────────────────
+ * Color palette: Deep charcoal base + electric indigo accent.
+ * Avoids default Tailwind blue — everything is custom and intentional.
+ * ──────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ─── Layout & Sidebar ─── */
+  --sidebar-width: 280px;
+  --sidebar-collapsed: 64px;
+
+  /* ─── Typography ─── */
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* ─── Default Dark Surfaces ─── */
+  --bg-base: #0D0D12;
+  --bg-surface: #13131A;
+  --bg-elevated: #1A1A24;
+  --bg-hover: #22222E;
+  --bg-active: #1E1E2E;
+
+  /* ─── Default Dark Borders ─── */
+  --border-subtle: #2A2A3A;
+  --border-hover: #3A3A4A;
+
+  /* ─── Default Dark Text ─── */
+  --text-primary: #E4E4ED;
+  --text-secondary: #A0A0B8;
+  --text-muted: #6B6B80;
+  --text-faint: #4A4A5E;
+
+  /* ─── Accent (Electric Indigo) ─── */
+  --accent: #6C5CE7;
+  --accent-hover: #7C6FF7;
+  --accent-active: #5A4BD6;
+  --accent-muted: rgba(108, 92, 231, 0.15);
+  --accent-glow: rgba(108, 92, 231, 0.25);
+
+  /* ─── Semantic ─── */
+  --danger: #E74C5C;
+  --danger-hover: #F25565;
+  --success: #2ED573;
+}
+
+[data-theme="dark"] {
+  /* ─── Surfaces (Dark) ─── */
+  --bg-base: #0D0D12;
+  --bg-surface: #13131A;
+  --bg-elevated: #1A1A24;
+  --bg-hover: #22222E;
+  --bg-active: #1E1E2E;
+
+  /* ─── Borders (Dark) ─── */
+  --border-subtle: #2A2A3A;
+  --border-hover: #3A3A4A;
+
+  /* ─── Text (Dark) ─── */
+  --text-primary: #E4E4ED;
+  --text-secondary: #A0A0B8;
+  --text-muted: #6B6B80;
+  --text-faint: #4A4A5E;
+
+  /* ─── Accent ─── */
+  --accent: #6C5CE7;
+  --accent-hover: #7C6FF7;
+  --accent-active: #5A4BD6;
+  --accent-muted: rgba(108, 92, 231, 0.15);
+  --accent-glow: rgba(108, 92, 231, 0.25);
+
+  /* ─── Semantic ─── */
+  --danger: #E74C5C;
+  --danger-hover: #F25565;
+  --success: #2ED573;
+}
+
+[data-theme="light"] {
+  /* ─── Surfaces (Light) ─── */
+  --bg-base: #F8F9FC;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F1F5F9;
+  --bg-hover: #E2E8F0;
+  --bg-active: #CBD5E1;
+
+  /* ─── Borders (Light) ─── */
+  --border-subtle: #E2E8F0;
+  --border-hover: #CBD5E1;
+
+  /* ─── Text (Light) ─── */
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #64748B;
+  --text-faint: #94A3B8;
+
+  /* ─── Accent (Electric Indigo - Light High Contrast) ─── */
+  --accent: #6C5CE7;
+  --accent-hover: #5B4CC7;
+  --accent-active: #4A3BB7;
+  --accent-muted: rgba(108, 92, 231, 0.12);
+  --accent-glow: rgba(108, 92, 231, 0.2);
+
+  /* ─── Semantic ─── */
+  --danger: #DC2626;
+  --danger-hover: #B91C1C;
+  --success: #16A34A;
+}
+
+/* ─── Base Resets ─────────────────────────────────────────────────── */
+
+body {
+  margin: 0;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+/* ─── Custom Animations ──────────────────────────────────────────── */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-elevated) 25%,
+    var(--bg-hover) 50%,
+    var(--bg-elevated) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes pulse-mic {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+.animate-pulse-mic {
+  animation: pulse-mic 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+/* ─── Scrollbar Styling ──────────────────────────────────────────── */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
+
+/* Firefox */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+/* ─── Sidebar Transition ─────────────────────────────────────────── */
+
+.sidebar-transition {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Thinking Animation ─────────────────────────────────────────── */
+
+@keyframes thinking-dot {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ─── Markdown Styles ────────────────────────────────────────────── */
+
+.markdown-body p {
+  margin-top: 0;
+  margin-bottom: 0.75em;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin-top: 0;
+  margin-bottom: 0.75em;
+  padding-left: 1.25em;
+}
+
+.markdown-body li {
+  margin-bottom: 0.25em;
+}
+
+.markdown-body code {
+  background: var(--bg-elevated);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.markdown-body pre {
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  margin-top: 0.5em;
+  margin-bottom: 0.75em;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.85em;
+  color: var(--text-primary);
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  color: var(--text-primary);
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.markdown-body h1 { font-size: 1.25em; }
+.markdown-body h2 { font-size: 1.1em; }
+.markdown-body h3 { font-size: 1em; }
+
+/* ─── Responsive Utilities ──────────────────────────────────────────── */
+
+/* Mobile sidebar backdrop overlay */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 40;
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Mobile sidebar overlay container */
+.sidebar-mobile-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 50;
+  width: var(--sidebar-width);
+  max-width: 85vw;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Mobile artifact overlay */
+.artifact-mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Responsive visibility helpers */
+.hide-on-mobile {
+  display: flex;
+}
+.show-on-mobile {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .hide-on-mobile {
+    display: none !important;
+  }
+  .show-on-mobile {
+    display: flex !important;
+  }
+}
+
+/* ─── Mobile Breakpoint Overrides ────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* Agent selector pills: smaller on mobile */
+  .agent-pills-container {
+    gap: 4px;
+  }
+  .agent-pills-container button {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Extra-small screens: icon-only pills */
+  .agent-pill-label {
+    display: none !important;
+  }
+  .agent-pills-container button {
+    padding: 6px !important;
+    min-width: 32px;
+    justify-content: center;
+  }
+}

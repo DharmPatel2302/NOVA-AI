@@ -1,0 +1,59 @@
+# ============================================================
+#  NOVA AI — Root .gitignore
+# ============================================================
+
+# ── Node / npm ───────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.log
+
+# ── Environment / Secrets (NEVER commit these) ───────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+terraform.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# ── Build outputs ────────────────────────────────────────────
+dist/
+dist-ssr/
+build/
+*.local
+
+# ── Frontend specific ────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── Temp / uploads ───────────────────────────────────────────
+backend/services/agent/temp/
+*.tmp
+*.pdf
+*.pptx
+
+# ── OS files ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.sw?
+
+# ── Docker volumes / local data ──────────────────────────────
+redis-data/
+
+# ── Misc ─────────────────────────────────────────────────────
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
