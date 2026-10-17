@@ -252,60 +252,60 @@ jobs:
           # Real values must be filled in manually after first deploy
           cd /home/ubuntu/nova-ai/backend
 
-          [ ! -f gateway/.env ] && cat > gateway/.env << 'EOF'
-PORT=8000
-FRONTEND_URL=http://localhost:5173
-SESSION_SECRET=nova-ai-super-secret-session-key-2024
-REDIS_URL=redis://redis:6379
-AUTH_SERVICE=http://auth-service:8001
-CHAT_SERVICE=http://chat-service:8002
-AGENT_SERVICE=http://agent-service:8003
-BILLING_SERVICE=http://billing-service:8004
-INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
-EOF
+          [ ! -f gateway/.env ] && {
+            echo "PORT=8000"
+            echo "FRONTEND_URL=http://localhost:5173"
+            echo "SESSION_SECRET=nova-ai-super-secret-session-key-2024"
+            echo "REDIS_URL=redis://redis:6379"
+            echo "AUTH_SERVICE=http://auth-service:8001"
+            echo "CHAT_SERVICE=http://chat-service:8002"
+            echo "AGENT_SERVICE=http://agent-service:8003"
+            echo "BILLING_SERVICE=http://billing-service:8004"
+            echo "INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024"
+          } > gateway/.env
 
-          [ ! -f services/auth/.env ] && cat > services/auth/.env << 'EOF'
-PORT=8001
-FRONTEND_URL=http://localhost:5173
-MONGODB_URI=REPLACE_WITH_MONGODB_URI
-SESSION_SECRET=nova-ai-super-secret-session-key-2024
-INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
-REDIS_URL=redis://redis:6379
-FIREBASE_PROJECT_ID=REPLACE
-FIREBASE_CLIENT_EMAIL=REPLACE
-FIREBASE_PRIVATE_KEY=REPLACE
-EOF
+          [ ! -f services/auth/.env ] && {
+            echo "PORT=8001"
+            echo "FRONTEND_URL=http://localhost:5173"
+            echo "MONGODB_URI=REPLACE_WITH_MONGODB_URI"
+            echo "SESSION_SECRET=nova-ai-super-secret-session-key-2024"
+            echo "INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024"
+            echo "REDIS_URL=redis://redis:6379"
+            echo "FIREBASE_PROJECT_ID=REPLACE"
+            echo "FIREBASE_CLIENT_EMAIL=REPLACE"
+            echo "FIREBASE_PRIVATE_KEY=REPLACE"
+          } > services/auth/.env
 
-          [ ! -f services/chat/.env ] && cat > services/chat/.env << 'EOF'
-PORT=8002
-MONGODB_URI=REPLACE_WITH_MONGODB_URI
-INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
-REDIS_URL=redis://redis:6379
-EOF
+          [ ! -f services/chat/.env ] && {
+            echo "PORT=8002"
+            echo "MONGODB_URI=REPLACE_WITH_MONGODB_URI"
+            echo "INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024"
+            echo "REDIS_URL=redis://redis:6379"
+          } > services/chat/.env
 
-          [ ! -f services/agent/.env ] && cat > services/agent/.env << 'EOF'
-PORT=8003
-MONGODB_URI=REPLACE_WITH_MONGODB_URI
-INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
-REDIS_URL=redis://redis:6379
-GROQ_API_KEY=REPLACE
-GOOGLE_API_KEY=REPLACE
-TAVILY_API_KEY=REPLACE
-QDRANT_API_KEY=REPLACE
-QDRANT_ENDPOINT=REPLACE
-CHAT_SERVICE_URL=http://chat-service:8002
-AUTH_SERVICE_URL=http://auth-service:8001
-BILLING_SERVICE_URL=http://billing-service:8004
-EOF
+          [ ! -f services/agent/.env ] && {
+            echo "PORT=8003"
+            echo "MONGODB_URI=REPLACE_WITH_MONGODB_URI"
+            echo "INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024"
+            echo "REDIS_URL=redis://redis:6379"
+            echo "GROQ_API_KEY=REPLACE"
+            echo "GOOGLE_API_KEY=REPLACE"
+            echo "TAVILY_API_KEY=REPLACE"
+            echo "QDRANT_API_KEY=REPLACE"
+            echo "QDRANT_ENDPOINT=REPLACE"
+            echo "CHAT_SERVICE_URL=http://chat-service:8002"
+            echo "AUTH_SERVICE_URL=http://auth-service:8001"
+            echo "BILLING_SERVICE_URL=http://billing-service:8004"
+          } > services/agent/.env
 
-          [ ! -f services/billing/.env ] && cat > services/billing/.env << 'EOF'
-PORT=8004
-MONGODB_URI=REPLACE_WITH_MONGODB_URI
-INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
-RAZORPAY_KEY_ID=REPLACE
-RAZORPAY_KEY_SECRET=REPLACE
-AUTH_SERVICE_URL=http://auth-service:8001
-EOF
+          [ ! -f services/billing/.env ] && {
+            echo "PORT=8004"
+            echo "MONGODB_URI=REPLACE_WITH_MONGODB_URI"
+            echo "INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024"
+            echo "RAZORPAY_KEY_ID=REPLACE"
+            echo "RAZORPAY_KEY_SECRET=REPLACE"
+            echo "AUTH_SERVICE_URL=http://auth-service:8001"
+          } > services/billing/.env
 
           # Check if docker is available
           if ! command -v docker &> /dev/null; then
