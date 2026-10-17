@@ -235,13 +235,26 @@ jobs:
           set -e
           echo "=== NOVA AI Deployment Started: $(date) ==="
 
-          cd /home/ubuntu/nova-ai
-          echo "--- Pulling latest code..."
-          git pull origin main
+          # Clone repo if it doesn't exist, otherwise pull latest
+          if [ ! -d "/home/ubuntu/nova-ai" ]; then
+            echo "--- Cloning repository for the first time..."
+            git clone https://github.com/DharmPatel2302/NOVA-AI.git /home/ubuntu/nova-ai
+          else
+            echo "--- Pulling latest code..."
+            cd /home/ubuntu/nova-ai
+            git pull origin main
+          fi
+
+          cd /home/ubuntu/nova-ai/backend
+
+          # Check if docker compose is available
+          if ! command -v docker &> /dev/null; then
+            echo "--- Docker not ready yet, waiting..."
+            sleep 30
+          fi
 
           echo "--- Rebuilding Docker containers..."
-          cd backend
-          docker compose down
+          docker compose down || true
           docker compose up -d --build
 
           echo "--- Waiting for services..."
