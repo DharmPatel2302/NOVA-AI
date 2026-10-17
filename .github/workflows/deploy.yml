@@ -248,7 +248,64 @@ jobs:
             git pull origin main
           fi
 
+          # Create stub .env files if they don't exist (fresh server)
+          # Real values must be filled in manually after first deploy
           cd /home/ubuntu/nova-ai/backend
+
+          [ ! -f gateway/.env ] && cat > gateway/.env << 'EOF'
+PORT=8000
+FRONTEND_URL=http://localhost:5173
+SESSION_SECRET=nova-ai-super-secret-session-key-2024
+REDIS_URL=redis://redis:6379
+AUTH_SERVICE=http://auth-service:8001
+CHAT_SERVICE=http://chat-service:8002
+AGENT_SERVICE=http://agent-service:8003
+BILLING_SERVICE=http://billing-service:8004
+INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
+EOF
+
+          [ ! -f services/auth/.env ] && cat > services/auth/.env << 'EOF'
+PORT=8001
+FRONTEND_URL=http://localhost:5173
+MONGODB_URI=REPLACE_WITH_MONGODB_URI
+SESSION_SECRET=nova-ai-super-secret-session-key-2024
+INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
+REDIS_URL=redis://redis:6379
+FIREBASE_PROJECT_ID=REPLACE
+FIREBASE_CLIENT_EMAIL=REPLACE
+FIREBASE_PRIVATE_KEY=REPLACE
+EOF
+
+          [ ! -f services/chat/.env ] && cat > services/chat/.env << 'EOF'
+PORT=8002
+MONGODB_URI=REPLACE_WITH_MONGODB_URI
+INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
+REDIS_URL=redis://redis:6379
+EOF
+
+          [ ! -f services/agent/.env ] && cat > services/agent/.env << 'EOF'
+PORT=8003
+MONGODB_URI=REPLACE_WITH_MONGODB_URI
+INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
+REDIS_URL=redis://redis:6379
+GROQ_API_KEY=REPLACE
+GOOGLE_API_KEY=REPLACE
+TAVILY_API_KEY=REPLACE
+QDRANT_API_KEY=REPLACE
+QDRANT_ENDPOINT=REPLACE
+CHAT_SERVICE_URL=http://chat-service:8002
+AUTH_SERVICE_URL=http://auth-service:8001
+BILLING_SERVICE_URL=http://billing-service:8004
+EOF
+
+          [ ! -f services/billing/.env ] && cat > services/billing/.env << 'EOF'
+PORT=8004
+MONGODB_URI=REPLACE_WITH_MONGODB_URI
+INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024
+RAZORPAY_KEY_ID=REPLACE
+RAZORPAY_KEY_SECRET=REPLACE
+AUTH_SERVICE_URL=http://auth-service:8001
+EOF
 
           # Check if docker is available
           if ! command -v docker &> /dev/null; then
