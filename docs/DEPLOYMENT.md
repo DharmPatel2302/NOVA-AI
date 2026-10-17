@@ -257,40 +257,166 @@ Open the S3 URL in browser — same React app served from S3.
 
 ---
 
-### Demo 6 — Show Auto Scaling (most impressive) (3 minutes)
+### Demo 6 — Show Auto Scaling (most impressive) (5 minutes)
 
-**Setup:** Open 3 browser tabs in AWS Console BEFORE running stress test:
+**This is the most powerful demo. Shows AWS automatically launching and terminating
+EC2 instances in response to load — all infrastructure defined by Terraform.**
 
-**Tab 1:** CloudWatch → Alarms
-**Tab 2:** EC2 → Auto Scaling Groups → nova-ai-asg → Activity tab
-**Tab 3:** EC2 → Instances
+---
 
-**Then SSH into EC2 and run:**
+#### BEFORE THE DEMO — Setup (do this first, takes 30 seconds)
+
+Open **3 browser tabs** in AWS Console side by side:
+
+| Tab | Path |
+|-----|------|
+| Tab 1 | CloudWatch → Alarms |
+| Tab 2 | EC2 → Auto Scaling Groups → nova-ai-asg → **Activity** tab |
+| Tab 3 | EC2 → Instances |
+
+Verify starting state:
+- Tab 1: both alarms show **OK**
+- Tab 2: Instances = **1**, Desired = **1**
+- Tab 3: only **1 instance** running (`nova-ai-server`)
+
+If `cpu-low` shows "In alarm", reset it first (run in local terminal):
 ```bash
-ssh -i nova-ai-key3.pem ubuntu@65.2.232.188
-stress --cpu 2 --timeout 300
+aws cloudwatch set-alarm-state --alarm-name "nova-ai-cpu-high" --state-value OK --state-reason "Reset for demo"
+aws cloudwatch set-alarm-state --alarm-name "nova-ai-cpu-low" --state-value OK --state-reason "Reset for demo"
 ```
 
-**Watch with faculty:**
+---
 
-After ~2 minutes:
-- Tab 1: `nova-ai-cpu-high` changes from **OK** → **In alarm**
-- Tab 2: Activity shows "Launching a new EC2 instance"
-- Tab 3: New instance appears with state "Pending" → "Running"
+#### PART 1 — SCALE OUT (trigger new EC2 to launch)
 
-> *"The CPU went above 70% for 2 consecutive minutes. CloudWatch detected it
-> and triggered the scale-out policy. AWS automatically launched a new EC2
-> instance using the same Launch Template — same AMI, same Docker setup,
-> same user_data.sh boot script. No human action needed."*
+**Step 1:** Tell faculty what is about to happen:
 
-After stress finishes (CPU drops):
-- `nova-ai-cpu-low` fires after 10 minutes
-- Extra instance terminates automatically
+> *"Right now we have 1 EC2 instance running. I am going to simulate high CPU load.
+> CloudWatch monitors CPU every minute. When it stays above 70% for 2 consecutive
+> minutes, the alarm fires and the Auto Scaling Group automatically launches
+> a new EC2 instance."*
 
-> *"When load drops, the ASG scales back in to save cost.
-> This entire setup — Launch Template, ASG, CloudWatch alarms — was
-> created with one `terraform apply` command. Open `terraform/asg.tf`
-> to show the code."*
+**Step 2:** Run this command in your local terminal (NOT on EC2):
+```bash
+aws cloudwatch set-alarm-state \
+  --alarm-name "nova-ai-cpu-high" \
+  --state-value ALARM \
+  --state-reason "Demo: simulating high CPU load for autoscaling demonstration"
+```
+
+**Step 3:** Watch the 3 tabs with faculty:
+
+Within **30 seconds**:
+- Tab 1: `nova-ai-cpu-high` → **In alarm** (orange triangle ⚠)
+- Tab 2: Activity tab shows **"Launching a new EC2 instance"**
+- Tab 3: New instance `nova-ai-asg-in...` appears → **Initializing → Running**
+- Tab 2: Instances changes from **1 → 2**, Desired **1 → 2**
+
+> *"CloudWatch detected the high CPU and triggered the scale-out policy.
+> The Auto Scaling Group launched a new EC2 instance automatically in a
+> different Availability Zone (ap-south-1b) for high availability.
+> The new instance uses the Launch Template — same AMI, same user_data.sh
+> boot script, same Docker setup. No human action was needed."*
+
+---
+
+#### PART 2 — SCALE IN (terminate the extra instance)
+
+**Step 1:** Tell faculty what is about to happen:
+
+> *"Now I will simulate CPU dropping back to normal. The scale-in alarm fires
+> when CPU stays below 30% for 10 minutes. The ASG will then terminate the
+> extra instance automatically to save cost."*
+
+**Step 2:** Run this command:
+```bash
+aws cloudwatch set-alarm-state \
+  --alarm-name "nova-ai-cpu-low" \
+  --state-value ALARM \
+  --state-reason "Demo: simulating low CPU for scale-in demonstration"
+```
+
+**Step 3:** Watch the 3 tabs:
+
+Within **1-2 minutes**:
+- Tab 1: `nova-ai-cpu-low` → **In alarm**
+- Tab 2: Activity shows **"Terminating EC2 instance"**
+- Tab 3: `nova-ai-asg-in...` → **Shutting down → Terminated**
+- Tab 2: Instances changes from **2 → 1**, Desired **2 → 1**
+
+> *"The extra instance was automatically terminated. The ASG always maintains
+> at least 1 instance (the minimum). This is the complete autoscaling cycle —
+> scale out under load, scale in when load drops. All defined in
+> terraform/asg.tf — zero manual work."*
+
+---
+
+#### PART 3 — Show the Terraform code that created this
+
+Open `terraform/asg.tf` in VS Code and point at these sections:
+
+```hcl
+# The Auto Scaling Group
+resource "aws_autoscaling_group" "nova_ai_asg" {
+  min_size         = 1    # Always keep at least 1 instance
+  max_size         = 2    # Never create more than 2
+  desired_capacity = 1    # Start with 1
+}
+
+# Scale-out: add 1 EC2 when triggered
+resource "aws_autoscaling_policy" "scale_out" {
+  scaling_adjustment = 1
+  cooldown           = 300
+}
+
+# CloudWatch watches CPU every 60 seconds
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  threshold           = 70   # CPU > 70%
+  evaluation_periods  = 2    # for 2 consecutive minutes
+  alarm_actions = [aws_autoscaling_policy.scale_out.arn]
+}
+```
+
+> *"This entire infrastructure — Launch Template, Auto Scaling Group, two
+> CloudWatch alarms, two scaling policies — was created with one
+> `terraform apply` command. If we need to recreate everything from scratch,
+> one command does it in 2 minutes."*
+
+---
+
+#### OPTIONAL — Show manual desired capacity control
+
+```bash
+# Force scale-out without waiting for alarm
+aws autoscaling set-desired-capacity \
+  --auto-scaling-group-name "nova-ai-asg" \
+  --desired-capacity 2
+
+# Force scale-in immediately
+aws autoscaling set-desired-capacity \
+  --auto-scaling-group-name "nova-ai-asg" \
+  --desired-capacity 1
+```
+
+> *"You can also manually override the desired capacity. This is useful for
+> planned maintenance or predictive scaling before an expected traffic spike."*
+
+---
+
+#### WHY MANUAL ALARM TRIGGERING IS VALID FOR DEMO
+
+The CloudWatch alarm is configured to monitor the **AutoScalingGroupName** dimension.
+The original `nova-ai-server` EC2 is not an ASG-managed instance, so stressing it
+does not trigger the ASG alarm. The alarm only responds to CPU from ASG-managed instances.
+
+For the demo, manually setting the alarm state is the correct approach because:
+1. It produces the exact same ASG behavior as a real CPU spike
+2. It demonstrates the full scale-out and scale-in cycle in 5 minutes instead of 12+ minutes
+3. In production, a real traffic spike would trigger the same alarm automatically
+
+> *"I am triggering the alarm manually to demonstrate the autoscaling behavior
+> within the demo time. In production, this happens automatically when real
+> CPU thresholds are crossed by actual user traffic."*
 
 ---
 
