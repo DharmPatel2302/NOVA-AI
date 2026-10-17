@@ -218,18 +218,8 @@ jobs:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          # Use Python to write the key — handles all line ending edge cases
-          python3 -c "
-          import os, sys
-          key = os.environ['SSH_KEY']
-          # Handle case where newlines were stored as literal \n
-          if '\\n' in key and '\n' not in key:
-              key = key.replace('\\n', '\n')
-          with open(os.path.expanduser('~/.ssh/nova-ai-key.pem'), 'w') as f:
-              f.write(key)
-              if not key.endswith('\n'):
-                  f.write('\n')
-          "
+          # Decode base64-encoded key to file
+          echo "$SSH_KEY" | base64 -d > ~/.ssh/nova-ai-key.pem
           chmod 600 ~/.ssh/nova-ai-key.pem
           head -1 ~/.ssh/nova-ai-key.pem
           wc -l ~/.ssh/nova-ai-key.pem
