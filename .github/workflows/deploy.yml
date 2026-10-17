@@ -216,8 +216,12 @@ jobs:
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/nova-ai-key.pem
+          printf '%s' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/nova-ai-key.pem
+          # Ensure proper Unix line endings
+          sed -i 's/\r//' ~/.ssh/nova-ai-key.pem
           chmod 600 ~/.ssh/nova-ai-key.pem
+          # Verify key is valid
+          ssh-keygen -y -f ~/.ssh/nova-ai-key.pem > /dev/null && echo "Key is valid" || echo "Key validation failed"
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy to EC2 via SSH
