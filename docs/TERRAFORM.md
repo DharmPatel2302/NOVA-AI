@@ -24,24 +24,38 @@ This takes 30+ minutes, is error-prone, and cannot be reproduced exactly. If the
 
 ## What NOVA AI Provisions with Terraform
 
-Running `terraform apply` creates **8 AWS resources** in Mumbai (ap-south-1):
+Running `terraform apply` creates **14 AWS resources** in Mumbai (ap-south-1):
 
 ```
 AWS ap-south-1 (Mumbai)
-├── aws_security_group       → Firewall rules for the EC2 server
-├── aws_instance             → t3.micro EC2 server (Ubuntu 22.04)
-├── aws_eip                  → Elastic IP (65.2.232.188 — fixed, never changes)
-├── aws_s3_bucket            → Storage bucket for React frontend files
-├── aws_s3_bucket_public_access_block  → Makes bucket publicly readable
-├── aws_s3_bucket_website_configuration → Enables static website hosting
-├── aws_s3_bucket_policy     → IAM policy allowing public GET requests
-└── random_id                → Unique suffix for globally unique S3 bucket name
+│
+├── Core Infrastructure (ec2.tf)
+│   ├── aws_security_group       → Firewall (ports 22, 80, 8000-8004)
+│   ├── aws_instance             → t3.micro EC2 server (Ubuntu 22.04)
+│   └── aws_eip                  → Elastic IP (65.2.232.188 — fixed forever)
+│
+├── Frontend Hosting (s3.tf)
+│   ├── aws_s3_bucket            → Storage bucket for React dist/ files
+│   ├── aws_s3_bucket_public_access_block  → Makes bucket publicly readable
+│   ├── aws_s3_bucket_website_configuration → Static website hosting
+│   ├── aws_s3_bucket_policy     → Public GET access policy
+│   └── random_id                → Unique suffix for globally unique bucket name
+│
+└── Auto Scaling (asg.tf)
+    ├── aws_launch_template      → Blueprint for new EC2s (same AMI + user_data.sh)
+    ├── aws_autoscaling_group    → Min: 1, Max: 2 instances
+    ├── aws_autoscaling_policy scale_out  → Add 1 EC2 when CPU > 70%
+    ├── aws_autoscaling_policy scale_in   → Remove 1 EC2 when CPU < 30%
+    ├── aws_cloudwatch_metric_alarm cpu_high → Monitors CPU, triggers scale-out
+    └── aws_cloudwatch_metric_alarm cpu_low  → Monitors CPU, triggers scale-in
 ```
 
 **Live infrastructure created:**
 - EC2 Instance ID: `i-062dea98040e78dde`
 - Public IP: `65.2.232.188` (fixed Elastic IP)
 - S3 Bucket: `nova-ai-frontend-19d45e08`
+- ASG Name: `nova-ai-asg`
+- CloudWatch Alarms: `nova-ai-cpu-high` / `nova-ai-cpu-low`
 - Region: `ap-south-1` (Mumbai — closest to India, lowest latency)
 
 ---
@@ -52,9 +66,10 @@ AWS ap-south-1 (Mumbai)
 terraform/
 ├── main.tf           → AWS + random providers declaration
 ├── variables.tf      → All configurable inputs (region, AMI, instance type, etc.)
-├── outputs.tf        → What to print after apply (IP, URLs, SSH command)
+├── outputs.tf        → What to print after apply (IP, URLs, SSH command, ASG info)
 ├── ec2.tf            → Security group, EC2 instance, Elastic IP
 ├── s3.tf             → S3 bucket + website hosting configuration
+├── asg.tf            → Auto Scaling Group + CloudWatch alarms (instance scaling)
 └── user_data.sh      → Shell script that runs on EC2 first boot
 ```
 
@@ -263,6 +278,136 @@ The entire application configures itself automatically. The server goes from a f
 
 ---
 
+### asg.tf — Auto Scaling Group (Instance-Level Scaling)
+
+This is the most advanced piece of the Terraform setup. While Kubernetes HPA scales pods **inside** one EC2, the ASG scales the EC2 **instances** themselves.
+
+```
+Normal traffic → 1 EC2 running all 6 Docker containers
+Load spikes, EC2 CPU > 70% for 2 minutes
+      ↓
+CloudWatch alarm fires
+      ↓
+ASG launches a NEW EC2 instance from the Launch Template
+New EC2 boots → runs user_data.sh → Docker → clones repo → starts all services
+      ↓
+Now 2 EC2s running (load split between them)
+
+Traffic drops, CPU < 30% for 10 minutes
+      ↓
+CloudWatch alarm fires
+      ↓
+ASG terminates the extra EC2
+Back to 1 EC2
+```
+
+#### Launch Template — Blueprint for New EC2s
+```hcl
+resource "aws_launch_template" "nova_ai_lt" {
+  name_prefix   = "nova-ai-lt-"
+  image_id      = var.ami_id           # Same Ubuntu 22.04 AMI
+  instance_type = var.instance_type    # Same t3.micro
+  key_name      = var.key_name         # Same SSH key
+
+  # Same security group — new instances have identical firewall rules
+  vpc_security_group_ids = [aws_security_group.nova_ai_sg.id]
+
+  # Same boot script — new instances self-configure automatically
+  user_data = base64encode(file("${path.module}/user_data.sh"))
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_size = 20       # 20GB SSD
+      volume_type = "gp3"
+    }
+  }
+}
+```
+
+The Launch Template is the blueprint. Every new EC2 the ASG creates uses this exact configuration — same OS, same startup script, same firewall. The new server self-configures identically to the original.
+
+#### Auto Scaling Group
+```hcl
+resource "aws_autoscaling_group" "nova_ai_asg" {
+  name             = "nova-ai-asg"
+  min_size         = 1    # Always keep at least 1 EC2 running
+  max_size         = 2    # Never create more than 2 (free tier safe)
+  desired_capacity = 1    # Start with 1 EC2
+
+  # Spread instances across all available subnets (high availability)
+  vpc_zone_identifier = tolist(data.aws_subnets.default.ids)
+
+  launch_template {
+    id      = aws_launch_template.nova_ai_lt.id
+    version = "$Latest"
+  }
+
+  health_check_type         = "EC2"
+  health_check_grace_period = 120   # Wait 2 min before checking (EC2 boot time)
+}
+```
+
+#### Scale-Out and Scale-In Policies
+```hcl
+# Add 1 EC2 when triggered
+resource "aws_autoscaling_policy" "scale_out" {
+  scaling_adjustment = 1    # +1 instance
+  cooldown           = 300  # Wait 5 min before scaling again (prevents flapping)
+}
+
+# Remove 1 EC2 when triggered
+resource "aws_autoscaling_policy" "scale_in" {
+  scaling_adjustment = -1   # -1 instance
+  cooldown           = 300
+}
+```
+
+#### CloudWatch Alarms — The Triggers
+```hcl
+# CPU > 70% for 2 consecutive minutes → launch new EC2
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60          # Check every 60 seconds
+  evaluation_periods  = 2           # Must be above threshold for 2 periods (2 min)
+  threshold           = 70          # 70% CPU
+  comparison_operator = "GreaterThanThreshold"
+  alarm_actions       = [aws_autoscaling_policy.scale_out.arn]
+}
+
+# CPU < 30% for 10 consecutive minutes → terminate extra EC2
+resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+  period              = 60
+  evaluation_periods  = 10          # Must be below for 10 periods (10 min)
+  threshold           = 30          # 30% CPU
+  comparison_operator = "LessThanThreshold"
+  alarm_actions       = [aws_autoscaling_policy.scale_in.arn]
+}
+```
+
+**Why 2 minutes for scale-out but 10 minutes for scale-in?**
+Scale-out is aggressive — if CPU spikes, add capacity immediately (2 min threshold).
+Scale-in is conservative — wait 10 minutes to confirm traffic really dropped before terminating. Prevents launching and terminating instances in rapid cycles.
+
+#### Two Levels of Scaling in NOVA AI
+
+```
+Level 1 — K8s HPA (Pod Scaling, FAST):
+  Pod CPU > 70% → add more pods inside same EC2
+  agent: 1 pod → 5 pods
+  Speed: ~20 seconds | Cost: free
+
+Level 2 — AWS ASG (Instance Scaling, SLOW):
+  EC2 overall CPU > 70% for 2 min → launch new EC2
+  EC2 #1 + EC2 #2 both running full Docker stack
+  Speed: 3-5 minutes | Cost: extra EC2 charges
+```
+
+HPA triggers first and handles most traffic spikes. ASG is the fallback for sustained extreme load that even max pods can't handle.
+
+---
+
 ## Terraform Commands
 
 ```bash
@@ -363,5 +508,25 @@ git log --all -- terraform/terraform.tfvars
 # No commits — it was never committed
 ```
 
+### Demo 8 — Show ASG in AWS Console
+AWS Console → EC2 → Auto Scaling Groups → `nova-ai-asg`
+Point out:
+- Desired: 1, Min: 1, Max: 2
+- Activity tab → shows scaling history
+- Instances tab → shows which EC2s are currently in the group
+
+### Demo 9 — Show CloudWatch Alarms
+AWS Console → CloudWatch → Alarms
+Show `nova-ai-cpu-high` and `nova-ai-cpu-low`:
+- State: OK (currently not triggered)
+- Threshold: 70% / 30%
+- Actions: linked to scale-out / scale-in policies
+
+### Demo 10 — Show asg.tf file
+Open `terraform/asg.tf`. Walk through:
+- Launch Template: "This is the blueprint — every new EC2 launched by ASG uses the exact same AMI, security group, and boot script"
+- ASG min/max: "Always 1 running, never more than 2 — keeps us on free tier"
+- CloudWatch alarm: "When CPU crosses 70% for 2 consecutive minutes, this alarm fires and triggers a new EC2"
+
 ### What to Say at Viva
-*"Infrastructure as Code means our entire cloud setup — the server, firewall, storage, networking — is defined in `.tf` files and committed to Git. If our EC2 server crashes at 3am, we don't spend an hour clicking through the AWS Console trying to remember the settings. We run `terraform apply` and in 3 minutes we have an identical server with identical configuration, automatically cloning our repo and starting all 6 Docker containers by itself. The entire setup is documented in code, version controlled, and reproducible by anyone on the team. That's the value of Infrastructure as Code."*
+*"Infrastructure as Code means our entire cloud setup — the server, firewall, storage, networking, and auto scaling — is defined in `.tf` files and committed to Git. If our EC2 server crashes at 3am, we don't spend an hour clicking through the AWS Console. We run `terraform apply` and in 3 minutes we have an identical server with identical configuration. We also have two levels of scaling: Kubernetes HPA scales pods inside one EC2 in 20 seconds, and the AWS Auto Scaling Group launches a completely new EC2 instance if the whole server is maxed out. CloudWatch monitors CPU and triggers both levels automatically — no human involvement needed."*
