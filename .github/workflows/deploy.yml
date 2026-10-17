@@ -213,37 +213,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/nova-ai-key.pem
+          chmod 600 ~/.ssh/nova-ai-key.pem
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
       - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 300s
-          script: |
-            set -e
-            echo "=== NOVA AI Deployment Started: $(date) ==="
+        run: |
+          ssh -i ~/.ssh/nova-ai-key.pem \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'DEPLOY'
+          set -e
+          echo "=== NOVA AI Deployment Started: $(date) ==="
 
-            # Navigate to project directory
-            cd /home/ubuntu/nova-ai
+          cd /home/ubuntu/nova-ai
+          echo "--- Pulling latest code..."
+          git pull origin main
 
-            # Pull latest code from GitHub
-            echo "--- Pulling latest code..."
-            git pull origin main
+          echo "--- Rebuilding Docker containers..."
+          cd backend
+          docker compose down
+          docker compose up -d --build
 
-            # Rebuild and restart all Docker containers
-            echo "--- Rebuilding Docker containers..."
-            cd backend
-            docker compose down
-            docker compose up -d --build
+          echo "--- Waiting for services..."
+          sleep 15
 
-            # Wait for services to be healthy
-            echo "--- Waiting for services to start..."
-            sleep 15
+          echo "--- Container status:"
+          docker compose ps
 
-            # Verify all containers are running
-            echo "--- Container status:"
-            docker compose ps
-
-            echo "=== Deployment Complete: $(date) ==="
-            echo "Gateway: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8000"
+          echo "=== Deployment Complete: $(date) ==="
+          DEPLOY
