@@ -228,23 +228,25 @@ jobs:
 
       - name: Deploy to EC2 via SSH
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           ssh -i ~/.ssh/nova-ai-key.pem \
             -o StrictHostKeyChecking=no \
             -o ConnectTimeout=30 \
             ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            "GH_TOKEN='$GH_TOKEN' bash -s" << 'DEPLOY'
+            "GH_PAT='$GH_PAT' bash -s" << 'DEPLOY'
           set -e
           echo "=== NOVA AI Deployment Started: $(date) ==="
 
           # Clone repo if it doesn't exist, otherwise pull latest
           if [ ! -d "/home/ubuntu/nova-ai" ]; then
             echo "--- Cloning repository for the first time..."
-            git clone https://x-access-token:${GH_TOKEN}@github.com/DharmPatel2302/NOVA-AI.git /home/ubuntu/nova-ai
+            git clone https://x-access-token:${GH_PAT}@github.com/DharmPatel2302/NOVA-AI.git /home/ubuntu/nova-ai
           else
             echo "--- Pulling latest code..."
             cd /home/ubuntu/nova-ai
+            # Update remote URL to use PAT for authentication
+            git remote set-url origin https://x-access-token:${GH_PAT}@github.com/DharmPatel2302/NOVA-AI.git
             git pull origin main
           fi
 
