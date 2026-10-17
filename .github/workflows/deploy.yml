@@ -214,21 +214,26 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup SSH key
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          # Write key — preserve newlines
-          cat << 'KEYEOF' > ~/.ssh/nova-ai-key.pem
-          ${{ secrets.EC2_SSH_KEY }}
-          KEYEOF
-          # Strip any leading spaces from heredoc
-          sed -i 's/^[[:space:]]*//' ~/.ssh/nova-ai-key.pem
-          sed -i 's/\r//' ~/.ssh/nova-ai-key.pem
+          # Use Python to write the key — handles all line ending edge cases
+          python3 -c "
+          import os, sys
+          key = os.environ['SSH_KEY']
+          # Handle case where newlines were stored as literal \n
+          if '\\n' in key and '\n' not in key:
+              key = key.replace('\\n', '\n')
+          with open(os.path.expanduser('~/.ssh/nova-ai-key.pem'), 'w') as f:
+              f.write(key)
+              if not key.endswith('\n'):
+                  f.write('\n')
+          "
           chmod 600 ~/.ssh/nova-ai-key.pem
-          # Debug: show first and last lines
           head -1 ~/.ssh/nova-ai-key.pem
-          tail -1 ~/.ssh/nova-ai-key.pem
           wc -l ~/.ssh/nova-ai-key.pem
-          ssh-keygen -y -f ~/.ssh/nova-ai-key.pem > /dev/null && echo "Key is valid" || echo "Key validation failed"
+          ssh-keygen -y -f ~/.ssh/nova-ai-key.pem > /dev/null && echo "Key OK" || echo "Key FAILED"
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy to EC2 via SSH
