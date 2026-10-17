@@ -20,6 +20,7 @@ import {
   addConversation,
   setActiveConversation,
   removeConversation,
+  resetConversations,
 } from "../redux/conversationSlice";
 import { clearMessages } from "../redux/messageSlice";
 import { getConversations } from "../features/getConversations";

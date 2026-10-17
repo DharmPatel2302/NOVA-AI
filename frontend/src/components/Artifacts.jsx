@@ -122,14 +122,17 @@ const Artifacts = ({ isMobile = false }) => {
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
 
-  // If no active artifact exists, render nothing
-  if (!activeArtifact) return null;
-
   // Reset active file index and view mode when artifact changes
+  // Must be before any early return — hooks must always run in same order
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
+    if (!activeArtifact) return;
     setActiveFileIndex(0);
     setViewMode("code");
   }, [activeArtifact]);
+
+  // If no active artifact exists, render nothing (after all hooks)
+  if (!activeArtifact) return null;
 
   const hasHtml = activeArtifact.files?.some(
     (f) =>
