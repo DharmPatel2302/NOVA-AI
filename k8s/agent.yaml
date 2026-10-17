@@ -1,0 +1,131 @@
+# ============================================================
+#  NOVA AI — Agent Service
+#  LangGraph orchestrator for 8 AI agents.
+#  Gets higher CPU/memory limits than other services because
+#  it runs LLM inference, file processing, and vector search.
+# ============================================================
+
+# ── Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-service
+  namespace: nova-ai
+  labels:
+    app: agent-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-service
+  template:
+    metadata:
+      labels:
+        app: agent-service
+    spec:
+      containers:
+        - name: agent-service
+          image: localhost:5000/nova-agent-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8003
+          env:
+            # ── Non-sensitive ──────────────────────────────────
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: AGENT_PORT
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: REDIS_URL
+            - name: CHAT_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: CHAT_SERVICE_URL
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: AUTH_SERVICE_URL
+            - name: BILLING_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: BILLING_SERVICE_URL
+            - name: QDRANT_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: QDRANT_ENDPOINT
+            # ── Sensitive ──────────────────────────────────────
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: MONGODB_URI
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: INTERNAL_SERVICE_SECRET
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: GROQ_API_KEY
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: GOOGLE_API_KEY
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: TAVILY_API_KEY
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: QDRANT_API_KEY
+          # Higher limits — agent does heavy AI work
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 20
+            periodSeconds: 10
+
+---
+# ── Service ──────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service
+  namespace: nova-ai
+  labels:
+    app: agent-service
+spec:
+  selector:
+    app: agent-service
+  ports:
+    - port: 8003
+      targetPort: 8003
+  type: ClusterIP

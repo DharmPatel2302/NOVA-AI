@@ -1,0 +1,79 @@
+# ============================================================
+#  NOVA AI — Horizontal Pod Autoscalers (HPA)
+#  Automatically scales pods up/down based on CPU usage.
+#  Requires metrics-server to be running in kube-system.
+#
+#  How it works:
+#  - K8s checks CPU every 15 seconds
+#  - If avg CPU > targetUtilization → add pods (up to maxReplicas)
+#  - If avg CPU < targetUtilization → remove pods (down to minReplicas)
+# ============================================================
+
+# ── Agent Service HPA ────────────────────────────────────────
+# Agent does LLM inference + file processing → most likely to spike
+# Scale 1→5 pods when CPU > 70%
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-hpa
+  namespace: nova-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-service
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70   # Scale up when avg CPU > 70%
+
+---
+# ── Gateway HPA ──────────────────────────────────────────────
+# Gateway handles all incoming traffic — scale if it becomes a bottleneck
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway-hpa
+  namespace: nova-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+---
+# ── Chat Service HPA ─────────────────────────────────────────
+# Chat is stateless (MongoDB stores data) — safe to scale horizontally
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chat-hpa
+  namespace: nova-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chat-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

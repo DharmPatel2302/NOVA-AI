@@ -1,0 +1,114 @@
+# ============================================================
+#  NOVA AI — Auth Service
+#  Handles Firebase login, user profiles, Redis sessions,
+#  and credit balance management
+# ============================================================
+
+# ── Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: nova-ai
+  labels:
+    app: auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: localhost:5000/nova-auth-service:latest
+          imagePullPolicy: Always          # Use local Docker image (built via docker compose)
+          ports:
+            - containerPort: 8001
+          env:
+            # ── Non-sensitive from ConfigMap ──────────────────
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: AUTH_PORT
+            - name: FRONTEND_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: FRONTEND_URL
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: REDIS_URL
+            # ── Sensitive from Secret ─────────────────────────
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: MONGODB_URI
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: SESSION_SECRET
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: INTERNAL_SERVICE_SECRET
+            - name: FIREBASE_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: FIREBASE_PROJECT_ID
+            - name: FIREBASE_CLIENT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: FIREBASE_CLIENT_EMAIL
+            - name: FIREBASE_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: FIREBASE_PRIVATE_KEY
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+# ── Service ──────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: nova-ai
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 8001
+      targetPort: 8001
+  type: ClusterIP

@@ -1,0 +1,29 @@
+# ============================================================
+#  NOVA AI — Ingress
+#  Routes all external HTTP traffic to the gateway service.
+#  Requires nginx ingress controller:
+#    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nova-ai-ingress
+  namespace: nova-ai
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"   # Allow large file uploads
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # All traffic → gateway
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-service
+                port:
+                  number: 8000

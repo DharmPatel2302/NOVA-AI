@@ -1,0 +1,86 @@
+# ============================================================
+#  NOVA AI — Chat Service
+#  Stores and retrieves conversations and messages in MongoDB
+# ============================================================
+
+# ── Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-service
+  namespace: nova-ai
+  labels:
+    app: chat-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat-service
+  template:
+    metadata:
+      labels:
+        app: chat-service
+    spec:
+      containers:
+        - name: chat-service
+          image: localhost:5000/nova-chat-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8002
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: CHAT_PORT
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: REDIS_URL
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: MONGODB_URI
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: INTERNAL_SERVICE_SECRET
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+# ── Service ──────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-service
+  namespace: nova-ai
+  labels:
+    app: chat-service
+spec:
+  selector:
+    app: chat-service
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP

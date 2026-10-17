@@ -1,0 +1,110 @@
+# ============================================================
+#  NOVA AI — API Gateway
+#  Single public entry point. Exposed as NodePort so it's
+#  accessible from outside the cluster at localhost:8000
+# ============================================================
+
+# ── Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: nova-ai
+  labels:
+    app: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: localhost:5000/nova-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: GATEWAY_PORT
+            - name: FRONTEND_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: FRONTEND_URL
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: REDIS_URL
+            - name: AUTH_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: AUTH_SERVICE
+            - name: CHAT_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: CHAT_SERVICE
+            - name: AGENT_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: AGENT_SERVICE
+            - name: BILLING_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: BILLING_SERVICE
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: SESSION_SECRET
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+# ── Service ──────────────────────────────────────────────────
+# NodePort — exposes gateway to host machine at localhost:8000
+# This is how the frontend and browser reach the backend
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  namespace: nova-ai
+  labels:
+    app: gateway
+spec:
+  selector:
+    app: gateway
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30000        # Fixed NodePort — accessible at localhost:30000
+  type: NodePort

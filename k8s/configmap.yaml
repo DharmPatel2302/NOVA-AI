@@ -1,0 +1,37 @@
+# ============================================================
+#  NOVA AI — ConfigMap
+#  Non-sensitive environment variables shared across services
+#  Safe to commit — no secrets here
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nova-ai-config
+  namespace: nova-ai
+data:
+  # ── Ports ──────────────────────────────────────────────────
+  GATEWAY_PORT: "8000"
+  AUTH_PORT: "8001"
+  CHAT_PORT: "8002"
+  AGENT_PORT: "8003"
+  BILLING_PORT: "8004"
+
+  # ── Inter-service URLs (using K8s Service DNS names) ───────
+  # Format: http://<service-name>.<namespace>.svc.cluster.local:<port>
+  # Shortform works within same namespace: http://<service-name>:<port>
+  AUTH_SERVICE: "http://auth-service:8001"
+  CHAT_SERVICE: "http://chat-service:8002"
+  AGENT_SERVICE: "http://agent-service:8003"
+  BILLING_SERVICE: "http://billing-service:8004"
+  CHAT_SERVICE_URL: "http://chat-service:8002"
+  AUTH_SERVICE_URL: "http://auth-service:8001"
+  BILLING_SERVICE_URL: "http://billing-service:8004"
+
+  # ── Redis ──────────────────────────────────────────────────
+  REDIS_URL: "redis://redis-service:6379"
+
+  # ── Frontend ───────────────────────────────────────────────
+  FRONTEND_URL: "http://localhost:5173"
+
+  # ── Qdrant ─────────────────────────────────────────────────
+  QDRANT_ENDPOINT: "https://422f6759-dd2a-451f-9f6b-6bf37e52c885.sa-east-1-0.aws.cloud.qdrant.io"

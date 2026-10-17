@@ -1,0 +1,96 @@
+# ============================================================
+#  NOVA AI — Billing Service
+#  Razorpay payment processing and plan management
+# ============================================================
+
+# ── Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-service
+  namespace: nova-ai
+  labels:
+    app: billing-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing-service
+  template:
+    metadata:
+      labels:
+        app: billing-service
+    spec:
+      containers:
+        - name: billing-service
+          image: localhost:5000/nova-billing-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8004
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: BILLING_PORT
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: nova-ai-config
+                  key: AUTH_SERVICE_URL
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: MONGODB_URI
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: INTERNAL_SERVICE_SECRET
+            - name: RAZORPAY_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: RAZORPAY_KEY_ID
+            - name: RAZORPAY_KEY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-ai-secrets
+                  key: RAZORPAY_KEY_SECRET
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+# ── Service ──────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-service
+  namespace: nova-ai
+  labels:
+    app: billing-service
+spec:
+  selector:
+    app: billing-service
+  ports:
+    - port: 8004
+      targetPort: 8004
+  type: ClusterIP
