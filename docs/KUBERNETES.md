@@ -451,7 +451,7 @@ Next check: currentCPU = 105%, 2 pods running
 desiredReplicas = ceil(2 × 105/70) = ceil(3.0) = 3 pods
 ```
 
-**Three HPAs in NOVA AI:**
+**Three HPAs in NOVA AI: Horizontal Pod Autoscaler (HPA)**
 
 | HPA | Service | Min | Max | Reason |
 |---|---|---|---|---|
@@ -600,32 +600,130 @@ agent-service-c88698894-nxk9p   1/1   Running     ← back up in ~10 seconds
 
 ---
 
-### Demo 4 — HPA: Live autoscaling (2 minutes)
+### Demo 4 — HPA: LIVE Autoscaling Under Real Load (5 minutes)
 
+This is the most powerful demo. You will actually push CPU above 70% in front of faculty and watch K8s scale pods automatically in real time.
+
+#### Step 1 — Show baseline (idle state)
 ```bash
-# Show current HPA state with live CPU readings
 kubectl get hpa -n nova-ai
 ```
-
-Output:
+Expected output:
 ```
 NAME          REFERENCE                  TARGETS       MINPODS   MAXPODS   REPLICAS
 agent-hpa     Deployment/agent-service   cpu: 0%/70%   1         5         1
 chat-hpa      Deployment/chat-service    cpu: 4%/70%   1         3         1
 gateway-hpa   Deployment/gateway         cpu: 2%/70%   1         3         1
 ```
+Point out: `TARGETS` column shows live CPU. Currently idle — 1 replica each.
 
-Point out:
-- `TARGETS` column — `cpu: 0%/70%` means current CPU is 0%, threshold is 70%
-- This is **live data** from Metrics Server — not a config value
-- If CPU goes above 70%, K8s automatically adds pods up to MAXPODS
+---
+
+#### Step 2 — Start a load generator (simulate traffic spike)
+
+Run a pod inside the cluster that hammers the gateway with 5 parallel requests every 0.1 seconds:
 
 ```bash
-# Show more details including scaling history
-kubectl describe hpa agent-hpa -n nova-ai
+kubectl run load-generator --image=busybox:1.36 --restart=Never -n nova-ai \
+  -- sh -c "while true; do \
+    wget -q -O- http://gateway-service:8000/health & \
+    wget -q -O- http://gateway-service:8000/health & \
+    wget -q -O- http://gateway-service:8000/health & \
+    wget -q -O- http://gateway-service:8000/health & \
+    wget -q -O- http://gateway-service:8000/health & \
+    sleep 0.1; done"
 ```
 
-**What to say:** *"HPA is watching CPU usage in real time. Right now agent is at 0% because it's idle. The moment it hits 70% — say 50 users are sending AI requests simultaneously — K8s automatically adds a second pod, then a third, up to 5 pods. When traffic drops, it scales back down to 1. No human involvement at all. This is production-grade autoscaling."*
+Wait 30 seconds, then check:
+
+```bash
+kubectl get hpa -n nova-ai
+kubectl top pods -n nova-ai --sort-by=cpu
+```
+
+---
+
+#### Step 3 — Watch HPA react (this is what faculty will see)
+
+After ~30 seconds of load, output will look like this:
+```
+NAME          REFERENCE           TARGETS          MINPODS   MAXPODS   REPLICAS
+gateway-hpa   Deployment/gateway  cpu: 163%/70%    1         3         3
+```
+
+And pods:
+```
+NAME                      CPU(cores)   MEMORY
+gateway-8dd87fb7d-f69t4   184m         23Mi    ← original pod
+gateway-8dd87fb7d-pz6s4   160m         24Mi    ← HPA added this
+gateway-8dd87fb7d-rnvmz   145m         23Mi    ← HPA added this
+load-generator            965m         5Mi     ← our stress pod
+```
+
+**What happened:**
+- CPU hit 163% (above 70% threshold)
+- HPA calculated: `ceil(1 × 163/70)` = 3 replicas needed
+- K8s spun up 2 new gateway pods in ~20 seconds
+- Load is now shared across 3 pods (163m + 160m + 145m each instead of 489m on one)
+
+---
+
+#### Step 4 — Stop load and watch scale-down
+```bash
+# Delete the load generator
+kubectl delete pod load-generator -n nova-ai
+
+# Watch CPU drop
+kubectl get hpa -n nova-ai
+```
+
+Output after ~30 seconds:
+```
+gateway-hpa   Deployment/gateway  cpu: 17%/70%   1   3   3
+```
+
+CPU dropped to 17% but still 3 replicas — K8s waits **5 minutes** before scaling down. This is intentional — it's called the **stabilization window**. It prevents "flapping" (rapidly scaling up and down if traffic is spiky).
+
+After 5 minutes:
+```
+gateway-hpa   Deployment/gateway  cpu: 2%/70%    1   3   1
+```
+Back to 1 replica.
+
+---
+
+#### What to say during this demo:
+*"I'm going to create a load generator that simulates hundreds of users hitting our gateway simultaneously. Watch the TARGETS column — it shows live CPU percentage versus our 70% threshold.*
+
+*[start load generator]*
+
+*CPU just hit 163% — more than double our threshold. Watch the REPLICAS column...*
+
+*[wait 20-30 seconds]*
+
+*Kubernetes automatically scaled from 1 to 3 gateway pods. The load is now distributed across all 3 — each is handling about 55% of CPU instead of one pod handling 163%. I didn't do anything — HPA detected the spike and responded automatically.*
+
+*[stop load generator]*
+
+*Now I've stopped the traffic. CPU dropped to 17%. The pods are still at 3 — Kubernetes waits 5 minutes before scaling down to avoid flapping. After that window, it'll scale back to 1 pod automatically.*
+
+*This is what production autoscaling looks like."*
+
+---
+
+#### Scaling math for viva explanation:
+```
+Current:  1 replica,  CPU = 163%,  Target = 70%
+Formula:  ceil(1 × 163/70) = ceil(2.33) = 3 replicas
+
+Next check (3 replicas running):
+          CPU per pod ≈ 54%,  Target = 70%
+Formula:  ceil(3 × 54/70) = ceil(2.31) = 3 replicas  (stable — no change)
+
+After load stops:
+          CPU per pod ≈ 2%,  Target = 70%
+Formula:  ceil(3 × 2/70) = ceil(0.09) = 1 replica (after stabilization window)
+```
 
 ---
 
