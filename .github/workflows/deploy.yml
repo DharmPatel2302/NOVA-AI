@@ -1,0 +1,249 @@
+# ============================================================
+#  NOVA AI — CI/CD Pipeline
+#  Triggered: every push to main branch
+#
+#  4 Stages:
+#  1. Code Quality  → ESLint on frontend
+#  2. Build         → Build all 5 Docker images
+#  3. Security      → Trivy scan + GitLeaks + npm audit
+#  4. Deploy        → SSH into EC2, git pull, docker compose up
+#
+#  Required GitHub Secrets:
+#  EC2_HOST     → 65.2.232.188
+#  EC2_USER     → ubuntu
+#  EC2_SSH_KEY  → contents of nova-ai-key.pem
+# ============================================================
+
+name: NOVA AI — CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+
+  # ════════════════════════════════════════════════════════════
+  #  STAGE 1 — CODE QUALITY
+  #  Run ESLint on frontend. Bad code fails here — never reaches deploy.
+  # ════════════════════════════════════════════════════════════
+  code-quality:
+    name: "Stage 1 — Code Quality"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Run ESLint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Check for .env files accidentally committed
+        run: |
+          # Fail if any .env file (not .env.example) is found in the commit
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -E "^\.env$|/\.env$" | grep -v "\.example"; then
+            echo "ERROR: .env file detected in commit — secrets must not be committed"
+            exit 1
+          fi
+          echo "No .env files in commit"
+
+  # ════════════════════════════════════════════════════════════
+  #  STAGE 2 — BUILD
+  #  Build all 5 Docker images from the backend/ context.
+  #  Uses GitHub Actions cache to speed up repeated builds.
+  # ════════════════════════════════════════════════════════════
+  build:
+    name: "Stage 2 — Build Docker Images"
+    runs-on: ubuntu-latest
+    needs: code-quality        # Only runs if Stage 1 passes
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/gateway/Dockerfile
+          push: false
+          tags: nova-gateway:latest
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway
+
+      - name: Build auth-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/services/auth/Dockerfile
+          push: false
+          tags: nova-auth-service:latest
+          cache-from: type=gha,scope=auth
+          cache-to: type=gha,mode=max,scope=auth
+
+      - name: Build chat-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/services/chat/Dockerfile
+          push: false
+          tags: nova-chat-service:latest
+          cache-from: type=gha,scope=chat
+          cache-to: type=gha,mode=max,scope=chat
+
+      - name: Build billing-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/services/billing/Dockerfile
+          push: false
+          tags: nova-billing-service:latest
+          cache-from: type=gha,scope=billing
+          cache-to: type=gha,mode=max,scope=billing
+
+      - name: Build agent-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/services/agent/Dockerfile
+          push: false
+          tags: nova-agent-service:latest
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+
+  # ════════════════════════════════════════════════════════════
+  #  STAGE 3 — SECURITY (DevSecOps)
+  #  Three security checks:
+  #  a) Trivy — scans Docker images for known CVEs
+  #  b) GitLeaks — scans commits for accidentally added secrets
+  #  c) npm audit — checks frontend deps for vulnerabilities
+  # ════════════════════════════════════════════════════════════
+  security:
+    name: "Stage 3 — Security Scan"
+    runs-on: ubuntu-latest
+    needs: build               # Only runs if Stage 2 passes
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # Full history needed for GitLeaks
+
+      # ── a) GitLeaks — secret leak detection ──────────────────
+      - name: Scan for secrets in code (GitLeaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── b) npm audit — dependency vulnerability scan ─────────
+      - name: Setup Node.js for npm audit
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm audit — frontend dependencies
+        run: npm audit --audit-level=high || true
+        # || true means: show vulnerabilities but don't fail the pipeline
+        # Remove "|| true" to make high/critical CVEs block the deploy
+        working-directory: frontend
+
+      - name: npm audit — auth service
+        run: npm audit --audit-level=high || true
+        working-directory: backend/services/auth
+
+      - name: npm audit — agent service
+        run: npm audit --audit-level=high || true
+        working-directory: backend/services/agent
+
+      # ── c) Trivy — Docker image vulnerability scan ───────────
+      - name: Set up Docker Buildx for Trivy
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build auth image for Trivy scan
+        run: docker build -f backend/services/auth/Dockerfile -t nova-auth-service:latest ./backend
+
+      - name: Trivy scan — auth-service image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: nova-auth-service:latest
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 0          # Report but don't fail (set to 1 to block on CVEs)
+
+      - name: Build agent image for Trivy scan
+        run: docker build -f backend/services/agent/Dockerfile -t nova-agent-service:latest ./backend
+
+      - name: Trivy scan — agent-service image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: nova-agent-service:latest
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+  # ════════════════════════════════════════════════════════════
+  #  STAGE 4 — DEPLOY
+  #  SSH into EC2, pull latest code, rebuild and restart services.
+  #  Only runs on main branch pushes after all 3 stages pass.
+  # ════════════════════════════════════════════════════════════
+  deploy:
+    name: "Stage 4 — Deploy to AWS EC2"
+    runs-on: ubuntu-latest
+    needs: security            # Only runs if Stage 3 passes
+    if: github.ref == 'refs/heads/main'   # Only deploy from main branch
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 300s
+          script: |
+            set -e
+            echo "=== NOVA AI Deployment Started: $(date) ==="
+
+            # Navigate to project directory
+            cd /home/ubuntu/nova-ai
+
+            # Pull latest code from GitHub
+            echo "--- Pulling latest code..."
+            git pull origin main
+
+            # Rebuild and restart all Docker containers
+            echo "--- Rebuilding Docker containers..."
+            cd backend
+            docker compose down
+            docker compose up -d --build
+
+            # Wait for services to be healthy
+            echo "--- Waiting for services to start..."
+            sleep 15
+
+            # Verify all containers are running
+            echo "--- Container status:"
+            docker compose ps
+
+            echo "=== Deployment Complete: $(date) ==="
+            echo "Gateway: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8000"
