@@ -200,7 +200,8 @@ jobs:
 
   # ════════════════════════════════════════════════════════════
   #  STAGE 4 — DEPLOY
-  #  SSH into EC2, pull latest code, rebuild and restart services.
+  #  4a) Build React frontend with production env vars
+  #  4b) SSH into EC2 → upload new frontend build → restart backend
   #  Only runs on main branch pushes after all 3 stages pass.
   # ════════════════════════════════════════════════════════════
   deploy:
@@ -213,6 +214,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ── 4a) Build React frontend using .env.production ────────
+      # VITE bakes env vars at build time — the built JS must have the
+      # correct VITE_SERVER_URL or every API call goes to localhost:8000.
+      # .env.production is committed (no secrets in it) so no GitHub
+      # Secrets are needed here.
+      - name: Setup Node.js for frontend build
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend (uses .env.production automatically)
+        run: npm run build
+        working-directory: frontend
+        # Vite automatically picks up .env.production when NODE_ENV=production
+        # .env.production already has VITE_SERVER_URL=http://65.2.232.188:8000
+
+      # ── 4b) SSH and deploy ────────────────────────────────────
       - name: Setup SSH key
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
@@ -225,6 +249,14 @@ jobs:
           wc -l ~/.ssh/nova-ai-key.pem
           ssh-keygen -y -f ~/.ssh/nova-ai-key.pem > /dev/null && echo "Key OK" || echo "Key FAILED"
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload frontend dist to EC2
+        run: |
+          # Copy the built React app to EC2 — this is what Nginx serves
+          scp -i ~/.ssh/nova-ai-key.pem \
+            -o StrictHostKeyChecking=no \
+            -r frontend/dist/* \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/var/www/nova-ai/
 
       - name: Deploy to EC2 via SSH
         env:

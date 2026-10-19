@@ -9,9 +9,12 @@ import {
 
 const router = express.Router();
 
+// Public — no session required (plan catalog is not user-specific)
+router.get("/plans", getPlans);
+
+// All routes below require an authenticated session
 router.use(extractUser);
 
-router.get("/plans", getPlans);
 router.post("/create-order", createOrder);
 router.post("/verify-payment", verifyPayment);
 router.post("/switch-free", switchToFreePlan);
