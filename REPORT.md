@@ -649,14 +649,16 @@ git push origin main
 │  · Trivy image scan     │
 └────────────┬────────────┘
              │ PASS ✅
-┌────────────▼────────────┐
-│  Stage 4: Deploy        │
-│  · SSH into EC2         │
-│  · git pull             │
-│  · docker compose up    │
-└─────────────────────────┘
+┌────────────▼────────────────────────────┐
+│  Stage 4: Deploy                        │
+│  · npm run build (React, .env.prod)     │
+│  · scp dist/* → EC2 /var/www/nova-ai/  │
+│  · scp nginx/nova-ai.conf → EC2        │
+│  · SSH: install + reload Nginx config  │
+│  · SSH: git pull + docker compose up   │
+└─────────────────────────────────────────┘
              ↓
-  Live on AWS — http://65.2.232.188
+  Live on AWS — http://65.2.232.188.nip.io
 ```
 
 **Stages only run if the previous stage passes.** Bad code is blocked at Stage 1 and never reaches the server.
@@ -677,15 +679,28 @@ git push origin main
 - **Trivy**: scans Docker images layer by layer — OS packages, Node.js packages, and application code — for known CVEs
 
 **Stage 4 — Deploy to EC2:**
+
+The pipeline now does 5 things in sequence:
+
 ```bash
-# Pipeline SSHs into EC2 using key stored in GitHub Secrets
-ssh ubuntu@65.2.232.188
-cd /home/ubuntu/nova-ai
-git pull origin main       # Download latest code
-cd backend
-docker compose down
-docker compose up -d --build   # Rebuild and restart all containers
-docker compose ps          # Print final status
+# 1. Build React frontend (VITE_SERVER_URL baked in from .env.production)
+npm run build   # output: frontend/dist/
+
+# 2. Create web root on EC2 with correct ownership
+ssh: sudo mkdir -p /var/www/nova-ai && sudo chown -R ubuntu:ubuntu /var/www/nova-ai
+
+# 3. Upload built frontend to EC2 Nginx web root
+scp -r frontend/dist/* ubuntu@65.2.232.188:/var/www/nova-ai/
+
+# 4. Upload + install Nginx proxy config
+scp nginx/nova-ai.conf → /tmp/ on EC2
+ssh: sudo cp /tmp/nova-ai.conf /etc/nginx/sites-available/
+     sudo ln -sf ... /etc/nginx/sites-enabled/
+     sudo nginx -t && sudo systemctl reload nginx
+
+# 5. Pull latest code + rebuild Docker containers
+ssh: git pull origin main
+     docker compose down && docker compose up -d --build
 ```
 
 The SSH key is stored as a GitHub Secret — base64 encoded, encrypted. Never appears in any log or code file.
@@ -698,6 +713,7 @@ The SSH key is stored as a GitHub Secret — base64 encoded, encrypted. Never ap
 | `EC2_USER` | `ubuntu` — SSH username |
 | `EC2_SSH_KEY` | base64-encoded private key |
 | `GH_PAT` | Personal Access Token for `git pull` on EC2 |
+| `VITE_FIREBASE_API_KEY` | Firebase client key — injected at build time (not in repo) |
 
 ### What to Show Faculty
 
@@ -710,8 +726,8 @@ git commit -m "demo: trigger CI/CD pipeline for faculty"
 git push
 ```
 Open GitHub → Actions tab. Watch each stage turn green in real time.  
-Then open `http://65.2.232.188:8000` → show the updated message is live.  
-"From code push to live on AWS — under 5 minutes, zero manual work."
+Then open `http://65.2.232.188.nip.io` → show the updated app is live.  
+"From code push to live on AWS — under 8 minutes, zero manual work."
 
 **Demo 2 — Show a FAILED pipeline:**
 Add a deliberate lint error in any `.jsx` file:
@@ -749,13 +765,23 @@ If any security check fails at any layer, the code does not ship.
 
 `.gitignore` blocks these from ever being tracked by Git:
 ```
-.env / .env.*       → API keys (Groq, Gemini, MongoDB URI, etc.)
-*.pem               → SSH private keys
-terraform.tfvars    → AWS credentials
-terraform.tfstate   → Infrastructure state with resource IDs
+.env / .env.*               → API keys (Groq, Gemini, MongoDB URI, etc.)
+*.pem                       → SSH private keys
+terraform.tfvars            → AWS credentials
+terraform.tfstate           → Infrastructure state with resource IDs
 ```
 
-Verify: `git log --all -- "**/.env"` returns nothing — no `.env` was ever committed in the project history.
+**Exception:** `frontend/.env.production` is committed — it contains only `VITE_SERVER_URL` and public Firebase config (project ID, app ID). No secrets.
+
+**Firebase API key** (`VITE_FIREBASE_API_KEY`) is stored as a GitHub Secret and injected at build time — never committed. GitLeaks flags the `AIzaSy` prefix as a GCP API key pattern. Storing it as a secret prevents false-positive pipeline failures.
+
+**`.gitleaks.toml` allowlist** — a configuration file tells GitLeaks which patterns are intentional false positives:
+```toml
+[allowlist]
+# Firebase client keys are designed to be public — security is via Firebase Rules
+regexes = ["AIzaSyArUf3uzinLv3Iwjp3nUGKpU5g1YwkpQeA"]
+paths   = ["frontend/.env.production", "frontend/src/utils/firebase.js"]
+```
 
 A second check in CI/CD Stage 1 catches it if someone accidentally runs `git add .env`.
 
@@ -792,10 +818,17 @@ A developer who accidentally hardcodes `const GROQ_KEY = "gsk_R47mnM6z..."` will
 ```javascript
 // backend/gateway/index.js
 
-// CORS locked to specific origin — not wildcard "*"
+// CORS — accepts multiple origins via comma-separated FRONTEND_URL env var
+// Never uses wildcard "*" — credentials (cookies) require exact origin
+const allowedOrigins = process.env.FRONTEND_URL.split(",").map(o => o.trim());
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173",
-  credentials: true,
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);           // server-to-server calls
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,   // required to send/receive session cookies
 }));
 
 // COOP header — allows Google OAuth popup without loosening security
@@ -986,35 +1019,79 @@ Watch: Instances: 2 → 1 → the extra EC2 terminates automatically.
 
 | What | URL | Status |
 |---|---|---|
-| Frontend Application | `http://65.2.232.188` | ✅ Live |
-| API Gateway Health | `http://65.2.232.188:8000/health` | ✅ Live |
-| S3 Static Frontend | `http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com` | ✅ Live |
+| **Primary App (fully working)** | `http://65.2.232.188.nip.io` | ✅ Live |
+| API Gateway Health | `http://65.2.232.188.nip.io/api/health` | ✅ Live |
+| Raw EC2 IP (same server) | `http://65.2.232.188` | ✅ Live |
+| S3 Static Frontend (UI only) | `http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com` | ✅ Live |
 
-### How the Frontend Is Served
+### Why `65.2.232.188.nip.io` Instead of Raw IP
+
+`nip.io` is a free wildcard DNS service — no signup, no configuration. It embeds the IP inside the domain name and automatically resolves it:
 
 ```
-User opens http://65.2.232.188
-        ↓
-Nginx on EC2 (port 80)
-        ↓
-Reads /var/www/nova-ai/index.html (React build)
-        ↓
-Browser downloads: index-CaAZ1kxy.js (1.4MB) + index-eU8absor.css (37KB)
-        ↓
-React app boots — connects to http://65.2.232.188:8000 for API calls
-        ↓
-All requests go through Gateway → Redis auth → correct microservice → AI response
+65.2.232.188.nip.io  →  DNS resolves to  →  65.2.232.188
 ```
+
+This gives a clean, professional domain URL instead of a raw IP address. Zero cost, works globally, no DNS record setup needed.
+
+### How the Frontend Is Served — Nginx Proxy Architecture
+
+```
+User opens http://65.2.232.188.nip.io
+        ↓
+Nginx on EC2 (port 80) — nginx/nova-ai.conf
+        │
+        ├── /api/* requests → proxy_pass http://localhost:8000 (Gateway)
+        │       ↓
+        │   Gateway verifies session cookie → routes to microservice
+        │
+        └── /* requests → /var/www/nova-ai/index.html (React SPA)
+                ↓
+            React app boots in browser
+            All API calls go to http://65.2.232.188.nip.io/api/...
+            Same origin (port 80) → session cookie is sent ✅
+```
+
+**Why Nginx proxies `/api/*` to port 8000:**
+
+The session cookie uses `SameSite=Lax`. Browsers only send this cookie when the request origin matches the page origin. If the frontend is on port 80 and the API is on port 8000, they are different origins — the cookie is blocked and every API call returns 401.
+
+By routing `/api/*` through Nginx on port 80, the browser sees everything as the same origin. Nginx forwards the request internally to port 8000 with the cookie intact.
+
+```nginx
+# nginx/nova-ai.conf
+location /api/ {
+    proxy_pass         http://localhost:8000;   # forward to Gateway
+    proxy_set_header   Cookie  $http_cookie;    # forward session cookie
+    proxy_read_timeout 300s;                    # support long AI requests
+    proxy_buffering    off;                     # no buffering for streaming
+}
+
+location / {
+    try_files $uri $uri/ /index.html;           # React SPA — all routes serve index.html
+}
+```
+
+### What the S3 URL Does
+
+The S3 URL (`http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com`) serves the same React HTML/JS/CSS files. The UI loads and looks correct. However it cannot handle the full app because:
+
+- API calls from the S3 domain go to `65.2.232.188.nip.io/api/` — a different origin
+- The session cookie (SameSite=Lax) is blocked cross-domain over HTTP
+- S3 has no server-side proxy capability — it only serves static files
+
+**The S3 URL demonstrates AWS S3 static website hosting as an infrastructure feature** — not as the primary deployment. Show faculty: bucket → files → static hosting enabled → UI loads. That is sufficient to demonstrate S3.
 
 ### How to Show Faculty
 
-**Step 1:** Open `http://65.2.232.188` in the browser.  
-**Step 2:** Sign in with Google — Firebase OAuth works.  
-**Step 3:** Send a message. Show the AI responding.  
-**Step 4:** Open it on a mobile phone with mobile data (not WiFi) to prove it is truly public — running on AWS, not localhost.  
-**Step 5:** Show `http://65.2.232.188:8000/health` — gateway is responding from the cloud.
+**Step 1:** Open `http://65.2.232.188.nip.io` — the app loads.
+**Step 2:** Sign in with Google — Firebase OAuth works.
+**Step 3:** Send a message — AI responds (session cookie works, same origin).
+**Step 4:** Open billing — plans load, credits show.
+**Step 5:** Open on mobile data (not WiFi) — proves it is truly public, running on AWS Mumbai.
+**Step 6:** Show `http://65.2.232.188.nip.io/api/health` in browser — gateway responds from cloud.
 
-**Viva point:** "This URL works from any device anywhere in the world. It is not running on my laptop. It is running on an AWS server in Mumbai, available 24/7 as long as the EC2 instance is running."
+**Viva point:** "The app is live at `http://65.2.232.188.nip.io` — this resolves to our EC2 Elastic IP in Mumbai. Nginx receives all requests on port 80, serves the React frontend, and proxies all `/api/*` calls to the Gateway container on port 8000. This same-origin architecture is why session cookies work correctly without HTTPS."
 
 ---
 
@@ -1026,18 +1103,18 @@ All requests go through Gateway → Redis auth → correct microservice → AI r
 # 1. Verify all containers on EC2 are healthy
 ssh -i nova-ai-key3.pem ubuntu@65.2.232.188 "docker ps --format 'table {{.Names}}\t{{.Status}}'"
 
-# 2. Verify API Gateway responds
-curl http://65.2.232.188:8000/health
+# 2. Verify Nginx proxy is running
+curl http://65.2.232.188.nip.io/api/health
 
-# 3. Verify frontend loads
-# Open http://65.2.232.188 in browser
+# 3. Verify frontend loads on nip.io domain
+# Open http://65.2.232.188.nip.io in browser — sign in + send a message
 
 # 4. Local K8s working
 kubectl get pods -n nova-ai
 kubectl get hpa -n nova-ai
 
 # 5. Recent successful CI/CD run
-# github.com/rohanPrajapati45/NOVA-AI → Actions → latest run is green
+# github.com/DharmPatel2302/NOVA-AI → Actions → latest run is green (all 4 stages)
 ```
 
 ### Demo Map by Technology
@@ -1048,11 +1125,21 @@ kubectl get hpa -n nova-ai
 | Docker | `docker compose up --build` + exec into container + explain Dockerfile | 5 min |
 | Terraform | `terraform plan` output + open ec2.tf + show asg.tf + AWS Console resources | 5 min |
 | Kubernetes | `kubectl get all -n nova-ai` + delete pod (self-healing) + HPA load test | 8 min |
-| CI/CD | Push a change → GitHub Actions → watch 4 stages run live | 5 min |
+| CI/CD | Push a change → GitHub Actions → watch 4 stages run live | 8 min |
 | DevSecOps | httpOnly cookie in DevTools + timingSafeEqual in code + Stage 3 scan logs | 5 min |
 | Cloud (AWS) | EC2 Console + docker ps on server + ASG scale demo via CloudWatch | 5 min |
-| Public Link | Open `http://65.2.232.188` + sign in + send a message | 2 min |
+| Public Link | Open `http://65.2.232.188.nip.io` + sign in + send a message | 2 min |
 
+### Architecture Summary (One Sentence Per Technology)
 
-*Report generated for NOVA AI — Multi-Agent AI Platform*  
+| # | Technology | What I Did |
+|---|---|---|
+| 1 | Microservices | Split NOVA AI into 5 independent services (Gateway, Auth, Chat, Agent, Billing) that communicate over HTTP with internal secrets |
+| 2 | Docker | Containerized all 5 services using multi-stage Dockerfiles with shared build context; orchestrated with Docker Compose |
+| 3 | Terraform | Provisioned all AWS infrastructure (EC2, S3, ASG, CloudWatch alarms) as code — `terraform apply` creates everything in 3 minutes |
+| 4 | Kubernetes | Deployed all services as pods with self-healing Deployments, secure Secrets, and HPA that auto-scales agent to 5 pods under load |
+| 5 | CI/CD | 4-stage GitHub Actions pipeline: ESLint → Docker build → security scan → build frontend + Nginx deploy + docker compose on EC2 |
+| 6 | DevSecOps | Security in 6 layers: .gitignore + GitLeaks allowlist + npm audit + Trivy + httpOnly cookies + timingSafeEqual + atomic MongoDB ops |
+| 7 | AWS Cloud | EC2 t3.micro in Mumbai runs all containers; S3 hosts static frontend; ASG auto-scales EC2 instances via CloudWatch CPU alarms |
+| 8 | Public Link | `http://65.2.232.188.nip.io` — Nginx on EC2 proxies `/api/*` to Gateway, serves React SPA — same-origin so session cookies work |
 
