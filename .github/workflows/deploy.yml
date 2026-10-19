@@ -233,8 +233,11 @@ jobs:
       - name: Build frontend (uses .env.production automatically)
         run: npm run build
         working-directory: frontend
-        # Vite automatically picks up .env.production when NODE_ENV=production
-        # .env.production already has VITE_SERVER_URL=http://65.2.232.188:8000
+        env:
+          # Firebase API key is a client-side public key but GitLeaks flags
+          # the AIzaSy prefix as GCP key — inject from secret to keep repo clean
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+        # Vite merges process.env overrides on top of .env.production at build time
 
       # ── 4b) SSH and deploy ────────────────────────────────────
       - name: Setup SSH key

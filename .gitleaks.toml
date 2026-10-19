@@ -1,0 +1,24 @@
+# GitLeaks configuration for NOVA AI
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "NOVA AI GitLeaks Config"
+
+[extend]
+# Extend the default ruleset
+useDefault = true
+
+[allowlist]
+description = "Allowed false positives"
+
+# Firebase client-side API keys (AIzaSy prefix) are intentionally public.
+# They are embedded in the browser bundle and visible to all users.
+# Security is enforced by Firebase Security Rules, not by hiding this key.
+# See: https://firebase.google.com/docs/projects/api-keys
+regexes = [
+  "AIzaSyArUf3uzinLv3Iwjp3nUGKpU5g1YwkpQeA",
+]
+
+paths = [
+  "frontend/.env.production",
+  "frontend/src/utils/firebase.js",
+]
