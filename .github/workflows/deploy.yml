@@ -348,11 +348,11 @@ jobs:
           } > gateway/.env
 
           # Always update FRONTEND_URL in gateway .env (safe — no secrets)
-          sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=http://65.2.232.188,http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com,http://localhost:5173|" gateway/.env
+          sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=http://65.2.232.188,http://65.2.232.188.nip.io,http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com,http://localhost:5173|" gateway/.env
 
           [ ! -f services/auth/.env ] && {
             echo "PORT=8001"
-            echo "FRONTEND_URL=http://65.2.232.188,http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com,http://localhost:5173"
+            echo "FRONTEND_URL=http://65.2.232.188,http://65.2.232.188.nip.io,http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com,http://localhost:5173"
             echo "MONGODB_URI=REPLACE_WITH_MONGODB_URI"
             echo "SESSION_SECRET=nova-ai-super-secret-session-key-2024"
             echo "INTERNAL_SERVICE_SECRET=nova-internal-service-secret-2024"
@@ -363,7 +363,7 @@ jobs:
           } > services/auth/.env
 
           # Always update FRONTEND_URL in auth .env (safe — no secrets)
-          sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=http://65.2.232.188,http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com,http://localhost:5173|" services/auth/.env
+          sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=http://65.2.232.188,http://65.2.232.188.nip.io,http://nova-ai-frontend-19d45e08.s3-website.ap-south-1.amazonaws.com,http://localhost:5173|" services/auth/.env
 
           [ ! -f services/chat/.env ] && {
             echo "PORT=8002"
