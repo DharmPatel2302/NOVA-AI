@@ -253,6 +253,13 @@ jobs:
           ssh-keygen -y -f ~/.ssh/nova-ai-key.pem > /dev/null && echo "Key OK" || echo "Key FAILED"
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Prepare EC2 web root directory
+        run: |
+          ssh -i ~/.ssh/nova-ai-key.pem \
+            -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "sudo mkdir -p /var/www/nova-ai && sudo chown -R ubuntu:ubuntu /var/www/nova-ai && sudo chmod -R 755 /var/www/nova-ai"
+
       - name: Upload frontend dist to EC2
         run: |
           # Copy the built React app to EC2 — this is what Nginx serves
