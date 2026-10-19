@@ -85,7 +85,13 @@ app.use(
   createProxyWithAuth(process.env.AGENT_SERVICE || "http://localhost:8003")
 );
 
-// Forward /api/billing/* → billing service (requires authenticated session)
+// Public: /api/billing/plans doesn't require session check
+app.use(
+  "/api/billing/plans",
+  createProxyWithAuth(process.env.BILLING_SERVICE || "http://localhost:8004")
+);
+
+// Forward protected /api/billing/* → billing service (requires authenticated session)
 app.use(
   "/api/billing",
   verifySession,
