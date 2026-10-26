@@ -24,7 +24,7 @@ spec:
       containers:
         - name: chat-service
           image: localhost:5000/nova-chat-service:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002
           env:

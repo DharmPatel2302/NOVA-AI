@@ -25,7 +25,7 @@ spec:
       containers:
         - name: auth-service
           image: localhost:5000/nova-auth-service:latest
-          imagePullPolicy: Always          # Use local Docker image (built via docker compose)
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8001
           env:

@@ -34,8 +34,8 @@ Instead of one monolithic server, NOVA AI has 5 completely independent services:
 │    └── routes to:                                           │
 │         ├── Auth Service    (8001) → Firebase + MongoDB     │
 │         ├── Chat Service    (8002) → MongoDB                │
-│         ├── Agent Service   (8003) → LangGraph + AI APIs   │
-│         └── Billing Service (8004) → Razorpay + MongoDB    │
+│         ├── Agent Service   (8003) → LangGraph + AI APIs    │
+│         └── Billing Service (8004) → Razorpay + MongoDB     │
 │                                                             │
 │  Shared: Redis (sessions + memory cache)                    │
 └─────────────────────────────────────────────────────────────┘

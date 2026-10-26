@@ -169,7 +169,7 @@ Every git push to main branch
    │  ├── GitLeaks           │
    │  ├── npm audit (3 svcs) │
    │  └── Trivy image scan   │
-   └────────────┬────────────┘
+   └────────────┬────────────┘ 
                 │ PASS ✅
    ┌────────────▼────────────┐
    │  Stage 4: Deploy        │
